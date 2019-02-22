@@ -834,7 +834,7 @@ function _normal_actions {
         _selection_clear
     fi
     # add current file to selection
-    if [[ $key = yy  ]]; then
+    if [[ $key_l = yy  ]]; then
         _selection_add
         _selection_store
         _selection_clear
