@@ -10,6 +10,27 @@
 - confirmation dialogs before executing copy/move/delete operations
 - for other features please look at keybindings listed below
 
+```
+[vito ~/suckless]%
+[vito ~/suckless]%
+[vito ~/suckless]% fb
+---------------------------------------------------------------------------------------
+/home/vito/suckless
+---------------------------------------------------------------------------------------
+drwxr-xr-x 3 vito vito 4.0K Jan 23 23:05 dmenu
+drwxr-xr-x 4 vito vito 4.0K Feb 15 00:09 dwm
+drwxr-xr-x 3 vito vito 4.0K Feb  8 21:16 dwmstatus
+drwxr-xr-x 2 vito vito 4.0K Feb  6 01:48 scripts
+drwxr-xr-x 3 vito vito 4.0K Jan 23 21:11 sent
+drwxr-xr-x 3 vito vito 4.0K Jan 26 19:50 st
+drwxr-xr-x 3 vito vito 4.0K Jan 24 00:59 surf
+drwxr-xr-x 3 vito vito 4.0K Feb  1 21:08 wmname
+-rwxr-xr-x 1 vito vito  212 Jan 23 22:58 calc.sh
+-rw-r--r-- 1 vito vito    0 Jan 23 22:00 dwm_loop
+---------------------------------------------------------------------------------------
+Normal mode: 'q' to quit
+```
+
 By default the program uses xdg-open for opening files, vim for editing files and st (simple terminal) for opening new terminals.
 This project has been inspired by other suckless programs, their philosophy and has been made purely for fun.
 Contibutions, additional testing or bug reporting is greatly apprechiated.
