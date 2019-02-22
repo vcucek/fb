@@ -3,63 +3,63 @@
 
 # Print help
 if [[ $1 = "--help" ]]; then
-	echo 'File browser'
-	echo 'Author: Vito Cucek'
-	echo ' '
-	echo 'Usage:'
-	echo ' fb [-sdb] [folder]'
-	echo ' '
-	echo 'Options:'
-	echo ' -s : print selection'
+    echo 'File browser'
+    echo 'Author: Vito Cucek'
+    echo ' '
+    echo 'Usage:'
+    echo ' fb [-sdb] [folder]'
+    echo ' '
+    echo 'Options:'
+    echo ' -s : print selection'
     echo ' -d : print last folder'
     echo ' -b : show bookmarks'
-	echo ' '
-	echo 'Enable cd on exit by adding alias to ~/.bashrc file:'
+    echo ' '
+    echo 'Enable cd on exit by adding alias to ~/.bashrc file:'
     echo 'alias ff='"'"'fb; cd $(fb -d)'"'"
-	echo ' '
-	echo 'Movements:'
-	echo ' Keys: 'hjkl' or up, down, left, right arrows'
-	echo ' C^u: Move up 10 files'
-	echo ' C^d: Move down 10 files'
-	echo ' L,M,H : Move low, middle, high'
+    echo ' '
+    echo 'Movements:'
+    echo ' Keys: 'hjkl' or up, down, left, right arrows'
+    echo ' C^u: Move up 10 files'
+    echo ' C^d: Move down 10 files'
+    echo ' L,M,H : Move low, middle, high'
     echo ' f[a-z]: Go to file name starting with'
-	echo ' .     : Repeat last "go to" action'
-	echo ' '
-	echo 'Actions:'
-	echo ' q     : Exit script, mode, or dialog'
-	echo ' o     : Edit file using default editor or vi'
-	echo ' O     : Edit file using default editor or vi in a new terminal window'
-	echo ' t     : open new terminal window'
-	echo ' a     : Show hidden files/folders'
-	echo ' e     : Execute command using current file/folder or marked files'
-	echo ' /     : Filter '
-	echo ' ?     : Find '
-	echo ' :     : Run shell command '
-	echo ' '
-	echo 'Bookmarks:'
-	echo ' b  : open/close bookmarks '
-	echo ' B  : bookmark current folder '
-	echo ' '
-	echo 'Select:'
-	echo ' v  : mark current file '
-	echo ' V  : mark all files in current folder '
+    echo ' .     : Repeat last "go to" action'
+    echo ' '
+    echo 'Actions:'
+    echo ' q     : Exit script, mode, or dialog'
+    echo ' o     : Edit file using default editor or vi'
+    echo ' O     : Edit file using default editor or vi in a new terminal window'
+    echo ' t     : open new terminal window'
+    echo ' a     : Show hidden files/folders'
+    echo ' e     : Execute command using current file/folder or marked files'
+    echo ' /     : Filter '
+    echo ' ?     : Find '
+    echo ' :     : Run shell command '
+    echo ' '
+    echo 'Bookmarks:'
+    echo ' b  : open/close bookmarks '
+    echo ' B  : bookmark current folder '
+    echo ' '
+    echo 'Select:'
+    echo ' v  : mark current file '
+    echo ' V  : mark all files in current folder '
     echo ' C  : copy marked files to clipboard as command arguments'
     echo ' c  : copy marked files to clipboard (work in progress)'
-	echo ' y  : add marked files to selection '
-	echo ' yy : add current file to selection'
+    echo ' y  : add marked files to selection '
+    echo ' yy : add current file to selection'
     echo ' x  : clear selection and marked files'
-	echo ' '
-	echo 'Edit:'
+    echo ' '
+    echo 'Edit:'
     echo ' n  : create file or folder (to create folder end it with "/")'
-	echo ' r  : rename current file or folder'
-	echo ' p  : copy selection to current directory'
-	echo ' m  : move selection to current directory'
-	echo ' d  : delete marked files or folders'
-	echo ' '
-	echo 'View:'
-	echo ' J: Increase height'
-	echo ' K: Decrease height'
-	echo ' F: Switch to full screen mode'
+    echo ' r  : rename current file or folder'
+    echo ' p  : copy selection to current directory'
+    echo ' m  : move selection to current directory'
+    echo ' d  : delete marked files or folders'
+    echo ' '
+    echo 'View:'
+    echo ' J: Increase height'
+    echo ' K: Decrease height'
+    echo ' F: Switch to full screen mode'
     exit 0
 fi
 
@@ -175,9 +175,9 @@ function _read_fb {
     stty echo
     # show cursor
     printf '\e[?25h'
-	read $1
+    read $1
     # move one line up
-     printf "\e[1A"
+    printf "\e[1A"
     # hide cursor
     printf '\e[?25l'
     # do not show user input
@@ -324,7 +324,7 @@ function set_stored_selection {
 
 function set_filter {
     found=($(printf -- "%s\n" "${files[@]}" | grep "/[^/]*$1[^/]*$"))
-	found_size=${#found[@]}
+    found_size=${#found[@]}
     if (( found_size > 0)); then
         _cursor_push
         dc_cursor=0
@@ -337,8 +337,8 @@ function set_filter {
 }
 
 function set_search {
-	found=($(find $PWD -iname "*$1*" ))
-	found_size=${#files[@]}
+    found=($(find $PWD -iname "*$1*" ))
+    found_size=${#files[@]}
     if (( found_size > 0)); then
         _cursor_push
         dc_cursor=0
@@ -348,13 +348,13 @@ function set_search {
         mode="search"
         status_message="Search results: 'q' to quit"
     fi
-	search=""
+    search=""
 }
 
 function set_dir {
-	dc_cursor=0
-	dc_begin=0
-	cd $1 > /dev/null
+    dc_cursor=0
+    dc_begin=0
+    cd $1 > /dev/null
 
     local dir_list=()
     local dir_list_draw=()
@@ -364,12 +364,12 @@ function set_dir {
     local tmp=()
     local tmp_details=()
 
-	if $show_hidden; then
-		tmp=($(ls -d -1 .* 2> /dev/null))
-		tmp_details=($(ls -lhd -1 .* 2> /dev/null))
+    if $show_hidden; then
+        tmp=($(ls -d -1 .* 2> /dev/null))
+        tmp_details=($(ls -lhd -1 .* 2> /dev/null))
     else
-		tmp=($(ls -1))
-		tmp_details=($(ls -lhd -1 * 2> /dev/null))
+        tmp=($(ls -1))
+        tmp_details=($(ls -lhd -1 * 2> /dev/null))
     fi
 
     # root directory fix
@@ -410,7 +410,7 @@ function row_nav {
     # move one line down, clear and print
     printf "\033[1B"
     printf "\033[2K"
-	printf "%s" "$3$2$1$col_none"
+    printf "%s" "$3$2$1$col_none"
 }
 
 function row_nav_end {
@@ -433,29 +433,29 @@ function render {
     if $fullscreen_mode; then
         dc_height=10000
     fi
-	local files_size=${#files[@]}
+    local files_size=${#files[@]}
 
     dc_height=$(( $dc_height+5 > $LINES ? $LINES-5 : $dc_height ))
     dc_height=$(( $dc_height < $PADDING ? $PADDING : $dc_height ))
 
     # Clamp cursor
-	dc_cursor=$(( $dc_cursor < 0 ? 0 : $dc_cursor ))
-	dc_cursor=$(( $dc_cursor > $files_size-1 ? $files_size-1 : $dc_cursor ))
+    dc_cursor=$(( $dc_cursor < 0 ? 0 : $dc_cursor ))
+    dc_cursor=$(( $dc_cursor > $files_size-1 ? $files_size-1 : $dc_cursor ))
 
-	# Print header and navigation bar
-	row "---------------------------------------------------------------------------------------"
-	row $PWD $col_nav
-	row "---------------------------------------------------------------------------------------"
+    # Print header and navigation bar
+    row "---------------------------------------------------------------------------------------"
+    row $PWD $col_nav
+    row "---------------------------------------------------------------------------------------"
 
-	dc_begin=$(( $dc_cursor - $dc_begin < $PADDING ? $dc_cursor - $PADDING : $dc_begin ))
-	dc_begin=$(( $dc_begin < 0 ? 0 : $dc_begin ))
-	dc_begin=$(( $dc_cursor - $dc_begin + $PADDING > $dc_height ? $dc_cursor + $PADDING - $dc_height : $dc_begin ))
-	dc_begin=$(( $dc_begin < 0 ? 0 : $dc_begin ))
+    dc_begin=$(( $dc_cursor - $dc_begin < $PADDING ? $dc_cursor - $PADDING : $dc_begin ))
+    dc_begin=$(( $dc_begin < 0 ? 0 : $dc_begin ))
+    dc_begin=$(( $dc_cursor - $dc_begin + $PADDING > $dc_height ? $dc_cursor + $PADDING - $dc_height : $dc_begin ))
+    dc_begin=$(( $dc_begin < 0 ? 0 : $dc_begin ))
 
-	#for i in $(seq 0 $(( dc_height -1 ))); do
-	for (( i=0; i<$dc_height; i++ )); do
-		file_index=$((dc_begin + i))
-		if (( file_index >= 0 && file_index < files_size)); then
+    #for i in $(seq 0 $(( dc_height -1 ))); do
+    for (( i=0; i<$dc_height; i++ )); do
+        file_index=$((dc_begin + i))
+        if (( file_index >= 0 && file_index < files_size)); then
             file=${files[file_index]}
             file_draw=${dc_lines[file_index]}
             file_selected=${selection[file_index]}
@@ -473,22 +473,22 @@ function render {
                 color_fg=$col_folder
             fi
             # Check if current dc_cursor
-			if [ $file_index -eq $dc_cursor ]; then
+            if [ $file_index -eq $dc_cursor ]; then
                 color_fg=$col_cursor
-			fi
+            fi
 
             row $file_draw $color_fg $color_bg;
-		else
+        else
             row
-		fi	
-	done
+        fi	
+    done
 
-	row "---------------------------------------------------------------------------------------"
+    row "---------------------------------------------------------------------------------------"
 
     # Print bottom message
     local message=$status_message
     [[ ! -z $notification_message ]] && message=$notification_message
-	row $message
+    row $message
 
     # render all with one print command to improve performance
     printf "%b" "${dc_canvas[*]}"
@@ -559,16 +559,16 @@ function _execute {
 ## Mode actions ############################################################
 
 function _view_actions {
-	# resize actions
-	if [[ $key = J ]]; then 
+    # resize actions
+    if [[ $key = J ]]; then 
         render_clear
         dc_height=$((dc_height + 1))
-	fi
-	if [[ $key = K ]]; then 
+    fi
+    if [[ $key = K ]]; then 
         render_clear
         dc_height=$((dc_height - 1))
-	fi
-	if [[ $key = F ]]; then 
+    fi
+    if [[ $key = F ]]; then 
         if $fullscreen_mode; then
             render_clear
             fullscreen_mode=false
@@ -576,65 +576,65 @@ function _view_actions {
         else
             fullscreen_mode=true
         fi
-	fi
+    fi
 }
 
 function _filter_actions {
-	if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
+    if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
         local curr="${files[dc_cursor]}"
-		if [ -d $curr ]; then
+        if [ -d $curr ]; then
             cursor_stack=()
-			set_dir $curr
-		elif [ -f $curr ]; then
+            set_dir $curr
+        elif [ -f $curr ]; then
             xdg-open $curr &>/dev/null &
             disown
-		fi
+        fi
         key="consumed"
-	fi
-	if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
-		set_dir .
-        _cursor_pop
-        key="consumed"
-	fi
-	if [[ $key = q || $key = $'\x1b' ]]; then
+    fi
+    if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
         set_dir .
         _cursor_pop
         key="consumed"
-	fi
+    fi
+    if [[ $key = q || $key = $'\x1b' ]]; then
+        set_dir .
+        _cursor_pop
+        key="consumed"
+    fi
 }
 
 function _bookmarks_actions {
     # Command delete bookmark
-	if [[ $key = d  ]]; then
+    if [[ $key = d  ]]; then
         _bookmark_remove
         key="consumed"
-	fi
-	if [[ $key = q || $key = b || $key = $'\x1b' ]]; then
+    fi
+    if [[ $key = q || $key = b || $key = $'\x1b' ]]; then
         set_dir .
         _cursor_pop
         key="consumed"
-	fi
-	if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
+    fi
+    if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
         local curr="${files[dc_cursor]}"
-		if [ -d $curr ]; then
-			set_dir $curr
-		elif [ -f $curr ]; then
+        if [ -d $curr ]; then
+            set_dir $curr
+        elif [ -f $curr ]; then
             xdg-open $curr &>/dev/null &
             disown
-		fi
+        fi
         cursor_stack=()
         key="consumed"
-	fi
-	if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
+    fi
+    if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
         set_dir .
         _cursor_pop
         key="consumed"
-	fi
+    fi
 }
 
 function _selection_actions {
-	# yes/no actions
-	if [[ $key = y ]]; then 
+    # yes/no actions
+    if [[ $key = y ]]; then 
         status_message="Loading..."
         render
         if [[ $selection_action = "copy" ]]; then 
@@ -651,23 +651,23 @@ function _selection_actions {
         _selection_stored_clear
         set_dir .
         _cursor_pop
-	fi
-	if [[ $key = n || $key = q ]]; then 
+    fi
+    if [[ $key = n || $key = q ]]; then 
         status_message=""
         set_dir .
         _cursor_pop
-	fi
+    fi
 }
 
 function _navigate_actions {
 
     # Repeat last go to action
-	if [[ $key = . ]]; then 
+    if [[ $key = . ]]; then 
         last_key="f"
         key=$last_goto_key
-	fi
+    fi
     # Go to action
-	if [[ $last_key = f ]]; then 
+    if [[ $last_key = f ]]; then 
         last_goto_key=$key
         for (( i=$(( $dc_cursor + 1 )); i<${#files[@]}; i++ )); do
             if [[ "${files[i]##*/}" == "$key"* ]]; then
@@ -686,123 +686,123 @@ function _navigate_actions {
         done
         key="consumed"
         return
-	fi
+    fi
 
     # up/down
-	if [[ $key = k || $key = $'\e[A' ]]; then 
+    if [[ $key = k || $key = $'\e[A' ]]; then 
         dc_cursor=$((dc_cursor - 1))
-	fi
-	if [[ $key = j || $key = $'\e[B' ]]; then 
+    fi
+    if [[ $key = j || $key = $'\e[B' ]]; then 
         dc_cursor=$((dc_cursor + 1))
-	fi
+    fi
 
     # 10 up/down
-	if [[ $key = $'\x15' ]]; then
+    if [[ $key = $'\x15' ]]; then
         dc_cursor=$((dc_cursor - 10))
-	fi
-	if [[ $key = $'\x04' ]]; then
+    fi
+    if [[ $key = $'\x04' ]]; then
         dc_cursor=$((dc_cursor + 10))
-	fi
+    fi
 
     # Move high/middle/low
-	if [[ $key = H ]]; then
+    if [[ $key = H ]]; then
         dc_cursor=$dc_begin
-	fi
-	if [[ $key = M ]]; then
+    fi
+    if [[ $key = M ]]; then
         dc_cursor=$(( dc_begin + dc_height / 2))
-	fi
-	if [[ $key = L ]]; then
+    fi
+    if [[ $key = L ]]; then
         dc_cursor=$(( dc_begin + dc_height ))
-	fi
+    fi
 
     # Move top/bottom
-	if [[ $key_l = gg ]]; then
+    if [[ $key_l = gg ]]; then
         dc_cursor=0
-	fi
-	if [[ $key = G ]]; then
+    fi
+    if [[ $key = G ]]; then
         local count=${#dc_lines[@]}
         dc_cursor=$(( count - 1 ))
-	fi
+    fi
 }
 
 function _normal_actions {
     # Command go to
-	if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
+    if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
         local curr="${files[dc_cursor]}"
-		if [ -d $curr ]; then
+        if [ -d $curr ]; then
             _cursor_push
-			set_dir $curr
-		elif [ -f $curr ]; then
+            set_dir $curr
+        elif [ -f $curr ]; then
             xdg-open $curr &>/dev/null &
             disown
-		fi
-	fi
-	if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
-		set_dir ..
+        fi
+    fi
+    if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
+        set_dir ..
         _cursor_pop
-	fi
+    fi
 
     # quit mode or script
-	if [[ $key = q || $key = $'\x1b' ]]; then
+    if [[ $key = q || $key = $'\x1b' ]]; then
         _exit
-	fi
+    fi
     # edit current file
-	if [[ $key = o ]]; then
+    if [[ $key = o ]]; then
         /bin/bash -c "${APP_EDITOR:-vi} \"${files[dc_cursor]}\""
         terminal_setup
-	fi
-	if [[ $key = O ]]; then
+    fi
+    if [[ $key = O ]]; then
         /bin/bash -c "${APP_TERM:-st} ${APP_EDITOR:-vi} \"${files[dc_cursor]}\""
-	fi
+    fi
     # open terminal
-	if [[ $key = t ]]; then
+    if [[ $key = t ]]; then
         /bin/bash -c "${APP_TERM:-st}" &>/dev/null &
         disown
-	fi
+    fi
     # run program using current file
-	if [[ $key = e  ]]; then
+    if [[ $key = e  ]]; then
         local _program=
-		row_nav "Program name: "; _read_fb _program
-		[ $_program ] && _execute $_program 
-	fi
-	if [[ $key = :  ]]; then
+        row_nav "Program name: "; _read_fb _program
+        [ $_program ] && _execute $_program 
+    fi
+    if [[ $key = :  ]]; then
         local _cmd=
-		row_nav ": "; _read_fb _cmd
-		[ $_cmd ] && _run $_cmd
-	fi
+        row_nav ": "; _read_fb _cmd
+        [ $_cmd ] && _run $_cmd
+    fi
 
     # Commands search/filter/view #
 
     # show hiddne files
-	if [[ $key = a  ]]; then
+    if [[ $key = a  ]]; then
         if $show_hidden; then
             show_hidden=false
         else
             show_hidden=true
         fi
-		set_dir .
-	fi
+        set_dir .
+    fi
     # filter files
-	if [[ $key = /  ]]; then
-		row_nav "Filter: "; _read_fb filter
+    if [[ $key = /  ]]; then
+        row_nav "Filter: "; _read_fb filter
         [ $filter ] && set_filter $filter
         row_nav_end
-	fi
+    fi
     # recursive search
-	if [[ $key = \?  ]]; then
-		row_nav "Search: "; _read_fb search
-		[ $search ] && set_search $search
+    if [[ $key = \?  ]]; then
+        row_nav "Search: "; _read_fb search
+        [ $search ] && set_search $search
         row_nav_end
-	fi
+    fi
 
     # Commands bookmarks
 
     # show bookmarks
-	if [[ $key = b  ]]; then
+    if [[ $key = b  ]]; then
         set_bookmarks
-	fi
+    fi
     # add current dir to bookmarks
-	if [[ $key = B  ]]; then
+    if [[ $key = B  ]]; then
         # bookmark selection if not empty
         if [ ${#selection[@]} -ne 0 ]; then
             for i in "${!selection[@]}"; do
@@ -810,94 +810,94 @@ function _normal_actions {
             done
             _selection_clear
             notification_message="Selection added to bookmarks"
-        # bookmark current directory
+            # bookmark current directory
         else
             _bookmark_add "${files[dc_cursor]}"
             notification_message="Current folder added to bookmarks"
         fi
-	fi
+    fi
 
     # Commands selection
 
     # mark all
-	if [[ $key = V ]]; then
+    if [[ $key = V ]]; then
         _selection_add_all
-	fi
+    fi
     # mark current
-	if [[ $key = v  ]]; then
+    if [[ $key = v  ]]; then
         _selection_toggle 
         dc_cursor=$((dc_cursor + 1))
-	fi
+    fi
     # add marked files to selection
-	if [[ $key = y  ]]; then
+    if [[ $key = y  ]]; then
         _selection_store
         _selection_clear
-	fi
+    fi
     # add current file to selection
-	if [[ $key = yy  ]]; then
+    if [[ $key = yy  ]]; then
         _selection_add
         _selection_store
         _selection_clear
-	fi
+    fi
     # clear marks and selection
-	if [[ $key = x  ]]; then
+    if [[ $key = x  ]]; then
         _selection_clear
         _selection_stored_clear
-	fi
+    fi
     # copy selection to clipboard as command arguments
-	if [[ $key = C  ]]; then
+    if [[ $key = C  ]]; then
         _selection_args | xsel -bi
         _selection_clear
-	fi
+    fi
     # copy selection to clipboard
-	if [[ $key = c  ]]; then
+    if [[ $key = c  ]]; then
         _selection_args | xsel -bi
         printf "file://%s\n" "${selection[@]}" | xsel -bi
         _selection_clear
-	fi
+    fi
 
     # Commands copy/move/paste/delete
 
     # Command create new file
-	if [[ $key = n  ]]; then
-		row_nav "New file/foler name: "
-		_read_fb name
+    if [[ $key = n  ]]; then
+        row_nav "New file/foler name: "
+        _read_fb name
         row_nav_end
         if [[ "$name" == */ ]]; then
             mkdir $name
         else
             touch $name
         fi
-		set_dir .
-	fi
+        set_dir .
+    fi
     # Command paste selection
-	if [[ $key = p  ]]; then
+    if [[ $key = p  ]]; then
         set_stored_selection "Paste listed files? (y/n)" "copy"
-	fi
+    fi
     # Command move selection
-	if [[ $key = m  ]]; then
+    if [[ $key = m  ]]; then
         set_stored_selection "Move listed files? (y/n)" "move"
-	fi
+    fi
     # Command rename current file
-	if [[ $key = r  ]]; then
+    if [[ $key = r  ]]; then
         _cursor_push
-		row_nav "New name: "
+        row_nav "New name: "
 
-		_read_fb name
+        _read_fb name
 
         terminal_restore
-		rename -i "${files[dc_cursor]}" "$name" "${files[dc_cursor]}"
+        rename -i "${files[dc_cursor]}" "$name" "${files[dc_cursor]}"
         terminal_setup
 
         #row_nav_end
         printf "\033[u"
-		set_dir .
+        set_dir .
         _cursor_pop
-	fi
+    fi
     # Command delete selected files
-	if [[ $key = d  ]]; then
+    if [[ $key = d  ]]; then
         set_selection "Delete listed files? (y/n)" "delete"
-	fi
+    fi
 }
 
 ## Program execution ###########################################################
@@ -924,7 +924,7 @@ fi
 if [[ -d $1 ]]; then
     dir=$1
 fi
- 
+
 # Initialize terminal, cache, hooks
 _initialize
 
@@ -938,19 +938,19 @@ fi
 
 while :
 do
-	render
+    render
 
     # read key
     k1=
     k2=
     k3=
-	read -sn1 k1
+    read -sn1 k1
     if [[ $k1 == $'\e' ]]; then
         read -sn1 -t 0.0001 k2
         read -sn1 -t 0.0001 k3
     fi
-	key=${k1}${k2}${k3}
-	key_l=${k1}${k2}${k3}$last_key
+    key=${k1}${k2}${k3}
+    key_l=${k1}${k2}${k3}$last_key
 
     # clear notification message on key press
     notification_message=""
