@@ -18,20 +18,24 @@ if [[ $1 = "--help" ]]; then
     echo 'alias ff='"'"'fb; cd $(fb -d)'"'"
     echo ' '
     echo 'Movements:'
-    echo ' Keys: 'hjkl' or up, down, left, right arrows'
-    echo ' C^u: Move up 10 files'
-    echo ' C^d: Move down 10 files'
-    echo ' L,M,H : Move low, middle, high'
-    echo ' f[a-z]: Go to file name starting with'
-    echo ' .     : Repeat last "go to" action'
+    echo ' Keys     : 'hjkl' or up, down, left, right arrows'
+    echo ' Return   : Open file using xdg-open or enter folder'
+    echo ' Backspace: Go back one folder'
+    echo ' C^u      : Move up 10 files'
+    echo ' C^d      : Move down 10 files'
+    echo ' L,M,H    : Move low, middle, high'
+    echo ' f[a-z]   : Go to file name starting with'
+    echo ' .        : Repeat last "go to" action'
     echo ' '
     echo 'Actions:'
     echo ' q     : Exit script, mode, or dialog'
-    echo ' o     : Edit file using default editor or vi'
-    echo ' O     : Edit file using default editor or vi in a new terminal window'
-    echo ' t     : open new terminal window'
+    echo ' O     : Edit file using default editor or vi'
+    echo ' o     : Edit file using default editor or vi in a new terminal window (st by default)'
+    echo ' t     : open new terminal window (st by default)'
     echo ' a     : Show hidden files/folders'
-    echo ' e     : Execute command using current file/folder or marked files'
+    echo ' e     : Execute command using current or marked files'
+    echo '         Occurances of {} in specified command will be replaced by marked'
+    echo '         files and executed sequentially'
     echo ' /     : Filter '
     echo ' ?     : Find '
     echo ' :     : Run shell command '
@@ -120,6 +124,11 @@ col_cursor=$'\e[1;31m'
 col_select_bg=$'\e[1;103m'
 col_select_fg=$'\e[1;30m'
 col_nav=$'\e[1;32m'
+
+col_link=$'\e[1;96m'
+col_exec=$'\e[1;32m'
+col_socket=$'\e[1;95m'
+col_char=$'\e[1;93m'
 col_folder=$'\e[1;94m'
 col_none=$'\e[0m'
 
@@ -365,11 +374,11 @@ function set_dir {
     local tmp_details=()
 
     if $show_hidden; then
-        tmp=($(ls -d -1 .* 2> /dev/null))
-        tmp_details=($(ls -lhd -1 .* 2> /dev/null))
+        tmp=($(ls -AN -1))
+        tmp_details=($(ls -ANlh -1))
     else
-        tmp=($(ls -1))
-        tmp_details=($(ls -lhd -1 * 2> /dev/null))
+        tmp=($(ls -N -1))
+        tmp_details=($(ls -Nlh -1))
     fi
 
     # root directory fix
@@ -379,25 +388,20 @@ function set_dir {
     for ((i=0; i<${#tmp[*]}; i++)); do
         if [[ -d ${tmp[i]} ]]; then
             dir_list+=("$PWD/${tmp[i]}")
-            dir_list_draw+=("${tmp_details[i]}")
+            dir_list_draw+=("${tmp_details[i+1]}")
         else
             file_list+=("$PWD/${tmp[i]}")
-            file_list_draw+=("${tmp_details[i]}")
+            file_list_draw+=("${tmp_details[i+1]}")
         fi
     done
+
     files=("${dir_list[@]}")
     files+=("${file_list[@]}")
     dc_lines=("${dir_list_draw[@]}")
     dc_lines+=("${file_list_draw[@]}")
 
-    #files=($(find $PWD -mindepth 1 -maxdepth 1 -type d))
-    #files+=($(find $PWD -mindepth 1 -maxdepth 1 -type f))
-    #dc_lines=($(printf "%s\n" "${files[@]}" | xargs -n 8000 -d "\n" ls -fhld1))
-    #dc_lines=($(ls -fhld1 ${files[*]}))
-
     dir=$PWD
     _selection_clear
-
     mode="normal"
     status_message="Normal mode: 'q' to quit"
 }
@@ -452,7 +456,6 @@ function render {
     dc_begin=$(( $dc_cursor - $dc_begin + $PADDING > $dc_height ? $dc_cursor + $PADDING - $dc_height : $dc_begin ))
     dc_begin=$(( $dc_begin < 0 ? 0 : $dc_begin ))
 
-    #for i in $(seq 0 $(( dc_height -1 ))); do
     for (( i=0; i<$dc_height; i++ )); do
         file_index=$((dc_begin + i))
         if (( file_index >= 0 && file_index < files_size)); then
@@ -463,14 +466,28 @@ function render {
             color_fg=""
             color_bg=""
 
+            # Check if directory
+            if [ -d $file ]; then
+                color_fg=$col_folder
+            # Check if char device
+            elif [ -c $file ]; then
+                color_fg=$col_char
+            # Check if socket
+            elif [ -S $file ]; then
+                color_fg=$col_socket
+            # Check if executable
+            elif [ -x $file ]; then
+                color_fg=$col_exec
+            fi
+            # Check if link
+            if [ -h $file ]; then
+                color_fg=$col_link
+            fi
+
             # Check if selected
             if [ ! -z "$file_selected" ]; then
                 color_bg=$col_select_bg
                 color_fg=$col_select_fg
-            fi
-            # Check if directory
-            if [ -d $file ]; then
-                color_fg=$col_folder
             fi
             # Check if current dc_cursor
             if [ $file_index -eq $dc_cursor ]; then
@@ -520,8 +537,30 @@ function _initialize() {
     done < <(cat $cache_bookmarks)
 
     # register signal hooks
-    trap _terminate EXIT
+    trap _on_stop TSTP
+    trap _on_resume CONT
+    trap _on_terminate EXIT
     trap 'terminal_fetch; render' WINCH
+}
+
+# Terminal hooks
+
+function _on_terminate(){
+    render_clear
+    terminal_restore
+    printf "%s" "$dir" > $cache_cd
+    exit 0
+}
+
+function _on_stop(){
+    render_clear
+    terminal_restore
+    kill -s SIGSTOP $$
+}
+
+function _on_resume(){
+    terminal_setup
+    echo Press enter to continue...
 }
 
 function _exit(){
@@ -531,17 +570,11 @@ function _exit(){
     exit 0
 }
 
-function _terminate(){
-    render_clear
-    terminal_restore
-    printf "%s" "$dir" > $cache_cd
-    exit 0
-}
-
 function _run {
     render_clear
+    echo Executing subshell...
     terminal_restore
-    eval $1
+    eval '$SHELL'
     terminal_setup
 }
 
@@ -549,9 +582,9 @@ function _execute {
     render_clear
     terminal_restore
     if [ ${#selection[@]} -ne 0 ]; then
-        eval "$1 $(_selection_args)"
+        eval 'printf "%s\n" "${selection[@]}" | xargs -n 1 -I{} $1'
     else
-        eval '$1 "${files[dc_cursor]}"'
+        eval 'printf "${files[dc_cursor]}" | xargs -n 1 -I{} $1'
     fi
     terminal_setup
 }
@@ -726,32 +759,37 @@ function _navigate_actions {
 }
 
 function _normal_actions {
-    # Command go to
+    # Enter current folder
     if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
         local curr="${files[dc_cursor]}"
         if [ -d $curr ]; then
             _cursor_push
             set_dir $curr
-        elif [ -f $curr ]; then
-            xdg-open $curr &>/dev/null &
-            disown
         fi
     fi
+    # Go back one folder
     if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
         set_dir ..
         _cursor_pop
     fi
-
+    # Open current file
+    if [[ $key = "" ]]; then
+        local curr="${files[dc_cursor]}"
+        if [ -f $curr ]; then
+            xdg-open $curr &>/dev/null &
+            disown
+        fi
+    fi
     # quit mode or script
     if [[ $key = q || $key = $'\x1b' ]]; then
         _exit
     fi
     # edit current file
-    if [[ $key = o ]]; then
+    if [[ $key = O ]]; then
         /bin/bash -c "${APP_EDITOR:-vi} \"${files[dc_cursor]}\""
         terminal_setup
     fi
-    if [[ $key = O ]]; then
+    if [[ $key = o ]]; then
         /bin/bash -c "${APP_TERM:-st} ${APP_EDITOR:-vi} \"${files[dc_cursor]}\""
     fi
     # open terminal
@@ -762,13 +800,11 @@ function _normal_actions {
     # run program using current file
     if [[ $key = e  ]]; then
         local _program=
-        row_nav "Program name: "; _read_fb _program
+        row_nav "execute with: "; _read_fb _program
         [ $_program ] && _execute $_program 
     fi
     if [[ $key = :  ]]; then
-        local _cmd=
-        row_nav ": "; _read_fb _cmd
-        [ $_cmd ] && _run $_cmd
+        _run
     fi
 
     # Commands search/filter/view #
