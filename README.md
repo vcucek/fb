@@ -37,20 +37,24 @@ Contibutions, additional testing or bug reporting is greatly apprechiated.
 
 ```
 Movements:
- Keys: hjkl or up, down, left, right arrows 
- C^u: Move up 10 files
- C^d: Move down 10 files
- L,M,H : Move low, middle, high
- f[a-z]: Go to file name starting with
- .     : Repeat last "go to" action
+ Keys     : hjkl or up, down, left, right arrows
+ Return   : Open file using xdg-open or enter folder
+ Backspace: Go back one folder
+ C^u      : Move up 10 files
+ C^d      : Move down 10 files
+ L,M,H    : Move low, middle, high
+ f[a-z]   : Go to file name starting with
+ .        : Repeat last "go to" action
 
 Actions:
  q     : Exit script, mode, or dialog
- o     : Edit file using default editor or vi
- O     : Edit file using default editor or vi in a new terminal window
- t     : open new terminal window
+ O     : Edit file using default editor or vi
+ o     : Edit file using default editor or vi in a new terminal window (st by default)
+ t     : open new terminal window (st by default)
  a     : Show hidden files/folders
- e     : Execute command using current file/folder or marked files
+ e     : Execute command using current or marked files
+         Occurances of {} in specified command will be replaced by marked
+         files and executed sequentially
  /     : Filter
  ?     : Find
  :     : Run shell command
