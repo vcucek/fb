@@ -790,12 +790,11 @@ function _normal_actions {
         terminal_setup
     fi
     if [[ $key = o ]]; then
-        /bin/bash -c "${APP_TERM:-st} ${APP_EDITOR:-vi} \"${files[dc_cursor]}\""
+        nohup ${APP_TERM:-st} ${APP_EDITOR:-vi} ${files[dc_cursor]} &
     fi
     # open terminal
     if [[ $key = t ]]; then
-        /bin/bash -c "${APP_TERM:-st}" &>/dev/null &
-        disown
+        nohup ${APP_TERM:-st} &
     fi
     # run program using current file
     if [[ $key = e  ]]; then
