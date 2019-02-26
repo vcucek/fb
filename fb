@@ -7,10 +7,9 @@ if [[ $1 = "--help" ]]; then
     echo 'Author: Vito Cucek'
     echo ' '
     echo 'Usage:'
-    echo ' fb [-sdb] [folder]'
+    echo ' fb [-db] [folder]'
     echo ' '
     echo 'Options:'
-    echo ' -s : print selection'
     echo ' -d : print last folder'
     echo ' -b : show bookmarks'
     echo ' '
@@ -36,21 +35,30 @@ if [[ $1 = "--help" ]]; then
     echo ' e     : Execute command using current or marked files'
     echo '         Occurances of {} in specified command will be replaced by marked'
     echo '         files and executed sequentially'
-    echo ' /     : Filter '
-    echo ' ?     : Find '
-    echo ' :     : Run shell command '
+    echo ' /     : Filter display (works also in selection or bookmarks mode)'
+    echo ' ?     : Recursive search '
+    echo ' g?    : Recursive content search '
+    echo ' :     : Open new shell in curent directory and close fb '
+    echo ' +     : list current mode (directory,selection,bookmarks,search) keyboard commands '
     echo ' '
     echo 'Bookmarks:'
     echo ' b  : open/close bookmarks '
-    echo ' B  : bookmark current folder '
+    echo ' i  : Edit bookmarks (bookmarks mode)'
+    echo ' d  : remove file/folder from bookmarks (bookmarks mode)'
+    echo ' B  : Add current or marked folders and files to bookmarks '
     echo ' '
     echo 'Select:'
     echo ' v  : mark current file '
     echo ' V  : mark all files in current folder '
-    echo ' C  : copy marked files to clipboard as command arguments'
-    echo ' c  : copy marked files to clipboard (work in progress)'
+    echo ' c  : copy marked files to clipboard as command arguments'
     echo ' y  : add marked files to selection '
     echo ' yy : add current file to selection'
+    echo ' x  : clear selection and marked files'
+    echo ' '
+    echo 'Selection:'
+    echo ' s  : show/hide current selection '
+    echo ' i  : Edit selection (selection mode)'
+    echo ' d  : remove file/folder from selection (selection mode)'
     echo ' x  : clear selection and marked files'
     echo ' '
     echo 'Edit:'
@@ -140,11 +148,11 @@ show_hidden=false
 status_message=""
 notification_message=""
 
-# normal,search,bookmarks,selection
-mode="normal"
+# dir,search,bookmarks,selection,marks,action
+mode="dir"
 
-# Dialog mode 
-selection_action=""
+# copy,move,delete
+action=""
 
 filter=""
 search=""
@@ -171,13 +179,9 @@ last_key=""
 
 cursor_stack=()
 bookmarks=()
-selection=()
+marks=()
 
 ## General Functions ###########################################################
-
-function _file_args {
-    printf "\'%s\'" "$PWD/${files[dc_cursor]}"
-}
 
 function _read_fb {
     # show user input
@@ -191,26 +195,6 @@ function _read_fb {
     printf '\e[?25l'
     # do not show user input
     stty -echo
-}
-
-function contains {
-    local e match="$1"
-    shift
-    for e; do [[ "$e" == "$match" ]] && return 0; done
-    return 1
-}
-
-function _trash {
-    # TODO: Implement and test
-    #mv "$1" $cache_trash"/files"
-    #echo "[Trash Info]" >> $cache_trash"/info/"$(basename $1).trashinfo
-    #echo "Path=$1" >> $cache_trash"/info/"$(basename $1).trashinfo
-    #echo "DeletionDate=$(date "+%Y-%m-%dT%H:%M:%S")" >> $cache_trash"/info/"$(basename $1).trashinfo
-
-    echo "[Trash Info]" 
-    echo "Path=$1" 
-    echo "DeletionDate=$(date "+%Y-%m-%dT%H:%M:%S")" 
-    sleep 5
 }
 
 ## Cursor stack functions ######################################################
@@ -232,138 +216,142 @@ function _cursor_pop {
 ## Bookmarks functions #########################################################
 
 function _bookmark_add {
-    bookmarks=("$1" "${bookmarks[@]}")
-    printf "%s\n" "${bookmarks[@]}" > $cache_bookmarks
+    echo "$(echo $1 | cat - $cache_bookmarks)" > $cache_bookmarks
 }
 
 function _bookmark_remove {
-    unset bookmarks[$dc_cursor]
-    bookmarks=("${bookmarks[@]}")
-    dc_lines=("${bookmarks[@]}")
-    files=("${bookmarks[@]}")
-    printf "%s\n" "${bookmarks[@]}" > $cache_bookmarks
+    unset files[$dc_cursor]
+    files=("${files[@]}")
+    sed -i "$((dc_cursor + 1))d" $cache_bookmarks
+}
+
+## Marks functions #########################################################
+
+function _marks_add {
+    marks[dc_cursor]="${files[dc_cursor]}"
+}
+function _marks_add_all {
+    marks=("${files[@]}")
+}
+
+function _marks_toggle {
+    file_selected=${marks[dc_cursor]}
+    # Check if selected
+    if [ ! -z "$file_selected" ]; then
+        marks[dc_cursor]=
+    else
+        marks[dc_cursor]="${files[dc_cursor]}"
+    fi
+}
+
+function _marks_clear {
+    marks=()
+}
+
+function _marks_args {
+    printf "\'%s\' " "${marks[@]}"
+}
+
+function _marks_to_selection {
+    if [ ${#marks[@]} -ne 0 ]; then
+        printf "${marks[*]}" >> $cache_selection
+        sed -i "s/ *#.*//g; /^$/d" $cache_selection
+    fi
 }
 
 ## Selection functions #########################################################
 
-function _selection_add {
-    selection[dc_cursor]="${files[dc_cursor]}"
-}
-function _selection_add_all {
-    selection=("${files[@]}")
-}
-
-function _selection_toggle {
-    file_selected=${selection[dc_cursor]}
-    # Check if selected
-    if [ ! -z "$file_selected" ]; then
-        selection[dc_cursor]=
-    else
-        selection[dc_cursor]="${files[dc_cursor]}"
-    fi
+function _selection_remove {
+    sed -i "$((dc_cursor + 1))d" $cache_selection
+    files=($(cat $cache_selection))
 }
 
 function _selection_clear {
-    selection=()
-}
-
-function _selection_args {
-    printf "\'%s\' " "${selection[@]}"
-}
-
-function _selection_store {
-    if [ ${#selection[@]} -ne 0 ]; then
-        printf "%s\n" "${selection[@]}" >> $cache_selection
-    fi
-}
-
-function _selection_stored_clear {
     > $cache_selection
+    files=($(cat $cache_selection))
 }
 
 ## Setup Content Functions #####################################################
 
-function set_bookmarks {
-    # refresh bookmarks
-    bookmarks=()
-    while read -r line; do
-        bookmarks+=("$line")
-    done < <(cat $cache_bookmarks)
+function set_action {
+    mode="action"
+    action=$1
+    status_message=$2
+}
 
+function set_bookmarks {
+    _marks_clear
     _cursor_push
     dc_cursor=0
     dc_begin=0
-    dc_lines=("${bookmarks[@]}")
-    files=("${bookmarks[@]}")
+    dc_lines=()
+    files=($(cat $cache_bookmarks))
     mode="bookmarks"
-    status_message="Stored bookmarks: 'q' to quit, 'd' to remove"
+    status_message="Stored bookmarks: 'q' to quit, '+' to see current mode actions"
+}
+
+function set_marks {
+    if [ ${#marks[@]} -ne 0 ]; then
+        files=("${marks[@]}")
+        mode="marks"
+        status_message="Marked files: 'q' to quit"
+        _marks_clear
+    fi
 }
 
 function set_selection {
-    if [ ${#selection[@]} -ne 0 ]; then
-        _cursor_push
-        dc_cursor=0
-        dc_begin=0
-        dc_lines=("${selection[@]}")
-        files=("${selection[@]}")
-        mode="selection"
-        selection_action=$2
-        status_message=$1
-    fi
-}
-
-function set_stored_selection {
-    # read stored selection
-    local selection_stored=()
-    while read -r line; do
-        selection_stored+=("$line")
-    done < <(cat $cache_selection)
-
-    if [ ${#selection_stored[@]} -ne 0 ]; then
-        _cursor_push
-        dc_cursor=0
-        dc_begin=0
-        dc_lines=("${selection_stored[@]}")
-        files=("${selection_stored[@]}")
-        mode="selection"
-        selection_action=$2
-        status_message=$1
-    fi
+    _marks_clear
+    _cursor_push
+    dc_cursor=0
+    dc_begin=0
+    dc_lines=()
+    files=($(cat $cache_selection))
+    mode="selection"
+    status_message="Selection: 'q' to quit, '+' to see current mode actions"
 }
 
 function set_filter {
-    found=($(printf -- "%s\n" "${files[@]}" | grep "/[^/]*$1[^/]*$"))
+    found=($(printf "${files[*]}" | grep "$1"))
     found_size=${#found[@]}
     if (( found_size > 0)); then
         _cursor_push
         dc_cursor=0
         dc_begin=0
-        dc_lines=("${found[@]}")
+        dc_lines=()
         files=("${found[@]}")
         mode="search"
-        status_message="Filtered results: 'q' to quit"
+        status_message="Filter results: 'q' to quit, '+' to see current mode actions"
+    else
+        notification_message="Nothing found"
     fi
 }
 
 function set_search {
     found=($(find $PWD -iname "*$1*" ))
-    found_size=${#files[@]}
-    if (( found_size > 0)); then
-        _cursor_push
-        dc_cursor=0
-        dc_begin=0
-        dc_lines=("${found[@]}")
-        files=("${found[@]}")
-        mode="search"
-        status_message="Search results: 'q' to quit"
-    fi
-    search=""
+    _cursor_push
+    dc_cursor=0
+    dc_begin=0
+    dc_lines=()
+    files=("${found[@]}")
+    mode="search"
+    status_message="Search results: 'q' to quit, '+' to see current mode actions"
+}
+
+function set_search_content {
+    found=($(grep -Ir "$1" ))
+    _cursor_push
+    dc_cursor=0
+    dc_begin=0
+    dc_lines=("${found[@]}")
+    files=($(printf "${found[*]}" | sed "s/ *:.*//"))
+    mode="search"
+    status_message="Search results: 'q' to quit, '+' to see current mode actions"
 }
 
 function set_dir {
     dc_cursor=0
     dc_begin=0
-    cd $1 > /dev/null
+    cd ${1:-.} > /dev/null
 
     local dir_list=()
     local dir_list_draw=()
@@ -401,9 +389,9 @@ function set_dir {
     dc_lines+=("${file_list_draw[@]}")
 
     dir=$PWD
-    _selection_clear
-    mode="normal"
-    status_message="Normal mode: 'q' to quit"
+    _marks_clear
+    mode="dir"
+    status_message="Directory mode: 'q' to quit, '+' to see current mode actions"
 }
 
 ## Rendering Functions #########################################################
@@ -458,46 +446,43 @@ function render {
 
     for (( i=0; i<$dc_height; i++ )); do
         file_index=$((dc_begin + i))
-        if (( file_index >= 0 && file_index < files_size)); then
-            file=${files[file_index]}
-            file_draw=${dc_lines[file_index]}
-            file_selected=${selection[file_index]}
 
-            color_fg=""
-            color_bg=""
+        file=${files[file_index]}
+        file_draw=${dc_lines[file_index]}
+        file_marked=${marks[file_index]}
 
-            # Check if directory
-            if [ -d $file ]; then
-                color_fg=$col_folder
-            # Check if char device
-            elif [ -c $file ]; then
-                color_fg=$col_char
-            # Check if socket
-            elif [ -S $file ]; then
-                color_fg=$col_socket
-            # Check if executable
-            elif [ -x $file ]; then
-                color_fg=$col_exec
-            fi
-            # Check if link
-            if [ -h $file ]; then
-                color_fg=$col_link
-            fi
+        color_fg=""
+        color_bg=""
 
-            # Check if selected
-            if [ ! -z "$file_selected" ]; then
-                color_bg=$col_select_bg
-                color_fg=$col_select_fg
-            fi
-            # Check if current dc_cursor
-            if [ $file_index -eq $dc_cursor ]; then
-                color_fg=$col_cursor
-            fi
+        # Check if directory
+        if [ -d $file ]; then
+            color_fg=$col_folder
+        # Check if char device
+        elif [ -c $file ]; then
+            color_fg=$col_char
+        # Check if socket
+        elif [ -S $file ]; then
+            color_fg=$col_socket
+        # Check if executable
+        elif [ -x $file ]; then
+            color_fg=$col_exec
+        fi
+        # Check if link
+        if [ -h $file ]; then
+            color_fg=$col_link
+        fi
 
-            row $file_draw $color_fg $color_bg;
-        else
-            row
-        fi	
+        # Check if selected
+        if [ ! -z "$file_marked" ]; then
+            color_bg=$col_select_bg
+            color_fg=$col_select_fg
+        fi
+        # Check if current dc_cursor
+        if [ $file_index -eq $dc_cursor ]; then
+            color_fg=$col_cursor
+        fi
+
+        row ${file_draw:-$file} $color_fg $color_bg;
     done
 
     row "---------------------------------------------------------------------------------------"
@@ -529,12 +514,6 @@ function _initialize() {
     mkdir -p $cache_dir
     touch $cache_selection
     touch $cache_bookmarks
-
-    # read stored bookmarks
-    bookmarks=()
-    while read -r line; do
-        bookmarks+=("$line")
-    done < <(cat $cache_bookmarks)
 
     # register signal hooks
     trap _on_stop TSTP
@@ -581,8 +560,8 @@ function _run {
 function _execute {
     render_clear
     terminal_restore
-    if [ ${#selection[@]} -ne 0 ]; then
-        eval 'printf "%s\n" "${selection[@]}" | xargs -n 1 -I{} $1'
+    if [ ${#marks[@]} -ne 0 ]; then
+        eval 'printf "%s\n" "${marks[@]}" | xargs -n 1 -I{} $1'
     else
         eval 'printf "${files[dc_cursor]}" | xargs -n 1 -I{} $1'
     fi
@@ -591,7 +570,7 @@ function _execute {
 
 ## Mode actions ############################################################
 
-function _view_actions {
+function _view_keys {
     # resize actions
     if [[ $key = J ]]; then 
         render_clear
@@ -612,76 +591,22 @@ function _view_actions {
     fi
 }
 
-function _filter_actions {
-    if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
-        local curr="${files[dc_cursor]}"
-        if [ -d $curr ]; then
-            cursor_stack=()
-            set_dir $curr
-        elif [ -f $curr ]; then
-            xdg-open $curr &>/dev/null &
-            disown
-        fi
-        key="consumed"
-    fi
-    if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
-        set_dir .
-        _cursor_pop
-        key="consumed"
-    fi
-    if [[ $key = q || $key = $'\x1b' ]]; then
-        set_dir .
-        _cursor_pop
-        key="consumed"
-    fi
-}
-
-function _bookmarks_actions {
-    # Command delete bookmark
-    if [[ $key = d  ]]; then
-        _bookmark_remove
-        key="consumed"
-    fi
-    if [[ $key = q || $key = b || $key = $'\x1b' ]]; then
-        set_dir .
-        _cursor_pop
-        key="consumed"
-    fi
-    if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
-        local curr="${files[dc_cursor]}"
-        if [ -d $curr ]; then
-            set_dir $curr
-        elif [ -f $curr ]; then
-            xdg-open $curr &>/dev/null &
-            disown
-        fi
-        cursor_stack=()
-        key="consumed"
-    fi
-    if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
-        set_dir .
-        _cursor_pop
-        key="consumed"
-    fi
-}
-
-function _selection_actions {
-    # yes/no actions
+function _action_keys {
     if [[ $key = y ]]; then 
         status_message="Loading..."
         render
-        if [[ $selection_action = "copy" ]]; then 
+        if [[ $action = "copy" ]]; then 
             printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} cp -r '{}' ./
         fi
-        if [[ $selection_action = "move" ]]; then 
+        if [[ $action = "move" ]]; then 
             printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} mv '{}' ./
         fi
-        if [[ $selection_action = "delete" ]]; then 
+        if [[ $action = "delete" ]]; then 
             printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} rm -r '{}'
         fi
         status_message=""
+        _marks_clear
         _selection_clear
-        _selection_stored_clear
         set_dir .
         _cursor_pop
     fi
@@ -692,7 +617,21 @@ function _selection_actions {
     fi
 }
 
-function _navigate_actions {
+function _navigate_keys {
+
+    if [[ $key = "+" ]]; then
+        render_clear
+        row_nav
+        echo 'Movement commands: '
+        echo ' Keys     : 'hjkl' or up, down, left, right arrows'
+        echo ' Return   : Open file using xdg-open or enter folder'
+        echo ' Backspace: Go back one folder'
+        echo ' C^u      : Move up 10 files'
+        echo ' C^d      : Move down 10 files'
+        echo ' L,M,H    : Move low, middle, high'
+        echo ' f[a-z]   : Go to file name starting with'
+        echo ' .        : Repeat last "go to" action'
+    fi
 
     # Repeat last go to action
     if [[ $key = . ]]; then 
@@ -758,19 +697,101 @@ function _navigate_actions {
     fi
 }
 
-function _normal_actions {
+function _mark_keys {
+    if [[ $key = "+" ]]; then
+        render_clear
+        row_nav
+        echo 'Mark and selection commands: '
+        echo ' v  : mark current '
+        echo ' V  : mark all '
+        echo ' c  : copy marked to clipboard as command arguments'
+        echo ' y  : add marked to selection '
+        echo ' yy : add current to selection'
+        echo ' x  : clear selection and marks'
+    fi
+    # mark all
+    if [[ $key = V ]]; then
+        _marks_add_all
+    fi
+    # mark current
+    if [[ $key = v  ]]; then
+        _marks_toggle 
+        dc_cursor=$((dc_cursor + 1))
+    fi
+    # add marked files to selection
+    if [[ $key = y  ]]; then
+        _marks_to_selection
+        _marks_clear
+    fi
+    # add current file to selection
+    if [[ $key_l = yy  ]]; then
+        _marks_clear
+        _marks_add
+        _marks_store
+        _marks_clear
+    fi
+    # clear marks and selection
+    if [[ $key = x  ]]; then
+        _marks_clear
+        _selection_clear
+    fi
+    # copy marked to clipboard as command arguments
+    if [[ $key = c  ]]; then
+        _marks_args | xsel -bi
+        _marks_clear
+    fi
+}
+
+function _search_keys {
+    # Print commands
+    if [[ $key = "+" ]]; then
+        render_clear
+        row_nav
+        echo 'Search commands: '
+        echo ' ?  : Find recursive'
+        echo ' g? : Find content recursive'
+    fi
+    # recursive content search
+    if [[ $key_l = 'g?' ]]; then
+        local search=
+        row_nav "Search content: "; _read_fb search
+        [ $search ] && set_search_content $search
+        row_nav_end
+        key="consumed"
+    fi
+    # recursive search
+    if [[ $key = '?' ]]; then
+        local search=
+        row_nav "Search: "; _read_fb search
+        [ $search ] && set_search $search
+        row_nav_end
+    fi
+}
+
+function _common_keys {
+    # Print commands
+    if [[ $key = "+" ]]; then
+        render_clear
+        row_nav
+        echo 'General: '
+        echo ' O  : Edit file'
+        echo ' o  : Edit file in a new window'
+        echo ' t  : open new terminal window'
+        echo ' e  : Execute command using current or marked files'
+        echo ' /  : Filter '
+        echo ' :  : Run shell command '
+        echo ' b  : open/close bookmarks '
+        echo ' B  : bookmark current '
+    fi
     # Enter current folder
     if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
-        local curr="${files[dc_cursor]}"
-        if [ -d $curr ]; then
-            _cursor_push
-            set_dir $curr
+        if [ ${#files[@]} -ne 0 ]; then
+            local curr="${files[dc_cursor]}"
+            if [ -d $curr ]; then
+                _cursor_push
+                set_dir $curr
+            fi
         fi
-    fi
-    # Go back one folder
-    if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
-        set_dir ..
-        _cursor_pop
     fi
     # Open current file
     if [[ $key = "" ]]; then
@@ -780,15 +801,12 @@ function _normal_actions {
             disown
         fi
     fi
-    # quit mode or script
-    if [[ $key = q || $key = $'\x1b' ]]; then
-        _exit
-    fi
     # edit current file
     if [[ $key = O ]]; then
         /bin/bash -c "${APP_EDITOR:-vi} \"${files[dc_cursor]}\""
         terminal_setup
     fi
+    # edit current file in a new window
     if [[ $key = o ]]; then
         nohup ${APP_TERM:-st} ${APP_EDITOR:-vi} ${files[dc_cursor]} >/dev/null 2>&1 &
     fi
@@ -802,12 +820,137 @@ function _normal_actions {
         row_nav "execute with: "; _read_fb _program
         [ $_program ] && _execute $_program 
     fi
+    # open shell
     if [[ $key = :  ]]; then
         _run
     fi
+    # filter
+    if [[ $key = /  ]]; then
+        row_nav "Filter: "; _read_fb filter
+        [ $filter ] && set_filter $filter
+        row_nav_end
+    fi
+    # show bookmarks
+    if [[ $key = b  ]]; then
+        set_bookmarks
+    fi
+    # add current dir or marked files to bookmarks
+    if [[ $key = B  ]]; then
+        if [ ${#marks[@]} -ne 0 ]; then
+            for i in "${!marks[@]}"; do
+                _bookmark_add "${marks[$i]}"
+            done
+            _marks_clear
+            notification_message="Selection added to bookmarks"
+            # bookmark current directory
+        else
+            _bookmark_add "${files[dc_cursor]}"
+            notification_message="Current folder added to bookmarks"
+        fi
+    fi
+    # show selection
+    if [[ $key = s  ]]; then
+        set_selection
+    fi
+}
 
-    # Commands search/filter/view #
+function _search_mode_keys {
+    if [[ $key = "+" ]]; then
+        render_clear
+        row_nav
+        echo 'Search mode actions: '
+        echo ' d  : delete file or folder '
+    fi
+    if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
+        local curr="${files[dc_cursor]}"
+        if [ -d $curr ]; then
+            cursor_stack=()
+        fi
+    fi
+    # Command delete selected files
+    if [[ $key = d  ]]; then
+        if [ ${#marks[@]} -ne 0 ]; then
+            set_marks
+            set_action "delete" "Delete listed files? (y/n)"
+        else
+            _marks_add
+            set_marks
+            set_action "delete" "Delete listed files? (y/n)"
+        fi
+    fi
+}
 
+function _bookmarks_mode_keys {
+    if [[ $key = "+" ]]; then
+        render_clear
+        row_nav
+        echo 'Bookmark mode actions: '
+        echo ' i  : edit bookmarks '
+        echo ' d  : remove bookmark '
+    fi
+    if [[ $key = i ]]; then
+        /bin/bash -c "${APP_EDITOR:-vi} \"$cache_bookmarks\""
+        terminal_setup
+        set_bookmarks
+    fi
+    if [[ $key = d ]]; then
+        _bookmark_remove
+    fi
+    if [[ $key = "l" || $key = $'\e[C' || $key = "" ]]; then
+        cursor_stack=()
+    fi
+}
+
+function _selection_mode_keys {
+    if [[ $key = "+" ]]; then
+        render_clear
+        row_nav
+        echo 'Selection commands: '
+        echo ' i  : edit selection '
+        echo ' P  : copy listed files to current folder '
+        echo ' M  : move listed files to current folder '
+        echo ' D  : delete listed files from filesystem '
+    fi
+    if [[ $key = i ]]; then
+        /bin/bash -c "${APP_EDITOR:-vi} \"$cache_selection\""
+        terminal_setup
+        set_selection
+    fi
+    if [[ $key = d  ]]; then
+        _selection_remove
+    fi
+    if [[ $key = P  ]]; then
+        set_marks
+        set_action "copy" "Copy listed files to current folder (y/n)"
+    fi
+    if [[ $key = M  ]]; then
+        set_marks
+        set_action "move" "Move listed files to current folder (y/n)"
+    fi
+    if [[ $key = D  ]]; then
+        set_marks
+        set_action "delete" "delete listed files from filesystem (y/n)"
+    fi
+}
+
+function _dir_mode_keys {
+    # Print commands
+    if [[ $key = "+" ]]; then
+        render_clear
+        row_nav
+        echo 'Current directory commands: '
+        echo ' a  : Show hidden files/folders'
+        echo ' n  : create file or folder (to create folder end it with "/")'
+        echo ' r  : rename current file or folder'
+        echo ' p  : copy selection to current directory'
+        echo ' m  : move selection to current directory'
+        echo ' d  : delete marked files or folders'
+    fi
+    # Go back one folder
+    if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
+        set_dir ..
+        _cursor_pop
+    fi
     # show hiddne files
     if [[ $key = a  ]]; then
         if $show_hidden; then
@@ -817,82 +960,6 @@ function _normal_actions {
         fi
         set_dir .
     fi
-    # filter files
-    if [[ $key = /  ]]; then
-        row_nav "Filter: "; _read_fb filter
-        [ $filter ] && set_filter $filter
-        row_nav_end
-    fi
-    # recursive search
-    if [[ $key = \?  ]]; then
-        row_nav "Search: "; _read_fb search
-        [ $search ] && set_search $search
-        row_nav_end
-    fi
-
-    # Commands bookmarks
-
-    # show bookmarks
-    if [[ $key = b  ]]; then
-        set_bookmarks
-    fi
-    # add current dir to bookmarks
-    if [[ $key = B  ]]; then
-        # bookmark selection if not empty
-        if [ ${#selection[@]} -ne 0 ]; then
-            for i in "${!selection[@]}"; do
-                _bookmark_add "${selection[$i]}"
-            done
-            _selection_clear
-            notification_message="Selection added to bookmarks"
-            # bookmark current directory
-        else
-            _bookmark_add "${files[dc_cursor]}"
-            notification_message="Current folder added to bookmarks"
-        fi
-    fi
-
-    # Commands selection
-
-    # mark all
-    if [[ $key = V ]]; then
-        _selection_add_all
-    fi
-    # mark current
-    if [[ $key = v  ]]; then
-        _selection_toggle 
-        dc_cursor=$((dc_cursor + 1))
-    fi
-    # add marked files to selection
-    if [[ $key = y  ]]; then
-        _selection_store
-        _selection_clear
-    fi
-    # add current file to selection
-    if [[ $key_l = yy  ]]; then
-        _selection_add
-        _selection_store
-        _selection_clear
-    fi
-    # clear marks and selection
-    if [[ $key = x  ]]; then
-        _selection_clear
-        _selection_stored_clear
-    fi
-    # copy selection to clipboard as command arguments
-    if [[ $key = C  ]]; then
-        _selection_args | xsel -bi
-        _selection_clear
-    fi
-    # copy selection to clipboard
-    if [[ $key = c  ]]; then
-        _selection_args | xsel -bi
-        printf "file://%s\n" "${selection[@]}" | xsel -bi
-        _selection_clear
-    fi
-
-    # Commands copy/move/paste/delete
-
     # Command create new file
     if [[ $key = n  ]]; then
         row_nav "New file/foler name: "
@@ -907,11 +974,13 @@ function _normal_actions {
     fi
     # Command paste selection
     if [[ $key = p  ]]; then
-        set_stored_selection "Paste listed files? (y/n)" "copy"
+        set_selection
+        set_action "copy" "Paste listed files? (y/n)"
     fi
     # Command move selection
     if [[ $key = m  ]]; then
-        set_stored_selection "Move listed files? (y/n)" "move"
+        set_selection
+        set_action "move" "Move listed files? (y/n)"
     fi
     # Command rename current file
     if [[ $key = r  ]]; then
@@ -931,23 +1000,19 @@ function _normal_actions {
     fi
     # Command delete selected files
     if [[ $key = d  ]]; then
-        set_selection "Delete listed files? (y/n)" "delete"
+        if [ ${#marks[@]} -ne 0 ]; then
+            set_marks
+            set_action "delete" "Delete listed files? (y/n)"
+        else
+            _marks_add
+            set_marks
+            set_action "delete" "Delete listed files? (y/n)"
+        fi
     fi
 }
 
 ## Program execution ###########################################################
 
-# Print stored selection
-if [[ $1 = "-s" ]]; then
-    if [ -f $cache_selection ]; then
-        selection=()
-        while read -r line; do
-            selection+=("$line")
-        done < <(cat $cache_selection)
-        printf "%s\n" "${selection[@]}"
-    fi
-    exit 0
-fi
 # Print last directory and exit
 if [[ $1 = "-d" ]]; then
     if [ -f $cache_cd ]; then
@@ -985,28 +1050,57 @@ do
         read -sn1 -t 0.0001 k3
     fi
     key=${k1}${k2}${k3}
-    key_l=${k1}${k2}${k3}$last_key
+    key_l=$last_key${k1}${k2}${k3}
 
     # clear notification message on key press
     notification_message=""
 
     # handle key actions
-    _view_actions
+    _view_keys
 
-    if [[ $mode = "selection" ]]; then
-        _navigate_actions
-        _selection_actions
-    elif [[ $mode = "search" ]]; then
-        _filter_actions
-        _navigate_actions
-        _normal_actions
-    elif [[ $mode = "bookmarks" ]]; then
-        _navigate_actions
-        _bookmarks_actions
-        _normal_actions
+    current_mode=$mode
+
+    if [[ $current_mode = "action" ]]; then
+        _navigate_keys
+        _action_keys
+    elif [[ $current_mode = "selection" ]]; then
+        _navigate_keys
+        _common_keys
+        _mark_keys
+        _selection_mode_keys
+    elif [[ $current_mode = "search" ]]; then
+        _navigate_keys
+        _common_keys
+        _mark_keys
+        _search_keys
+        _search_mode_keys
+    elif [[ $current_mode = "bookmarks" ]]; then
+        _navigate_keys
+        _common_keys
+        _bookmarks_mode_keys
+    fi
+
+    if [[ $current_mode = "dir" ]]; then
+        _navigate_keys
+        _common_keys
+        _mark_keys
+        _search_keys
+        _dir_mode_keys
+
+        # quit 
+        if [[ $key = q || $key = $'\x1b' ]]; then
+            _exit
+        fi
     else
-        _navigate_actions
-        _normal_actions
+        # Go to dir mode
+        if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' ]]; then
+            set_dir 
+            _cursor_pop
+        fi
+        if [[ $key = q || $key = $'\x1b' ]]; then
+            set_dir
+            _cursor_pop
+        fi
     fi
     last_key=$key
 done

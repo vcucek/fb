@@ -55,21 +55,30 @@ Actions:
  e     : Execute command using current or marked files
          Occurances of {} in specified command will be replaced by marked
          files and executed sequentially
- /     : Filter
- ?     : Find
- :     : Run shell command
+ /     : Filter display (works also in selection or bookmarks mode)
+ ?     : Recursive search
+ g?    : Recursive content search
+ :     : Open new shell in curent directory and close fb
+ +     : list current mode (directory,selection,bookmarks,search) keyboard commands
 
 Bookmarks:
  b  : open/close bookmarks
- B  : bookmark current folder
+ i  : Edit bookmarks (bookmarks mode)
+ d  : remove file/folder from bookmarks (bookmarks mode)
+ B  : Add current or marked folders and files to bookmarks
 
 Select:
  v  : mark current file
  V  : mark all files in current folder
- C  : copy marked files to clipboard as command arguments
- c  : copy marked files to clipboard (work in progress)
+ c  : copy marked files to clipboard as command arguments
  y  : add marked files to selection
  yy : add current file to selection
+ x  : clear selection and marked files
+
+Selection:
+ s  : show/hide current selection
+ i  : Edit selection (selection mode)
+ d  : remove file/folder from selection (selection mode)
  x  : clear selection and marked files
 
 Edit:
