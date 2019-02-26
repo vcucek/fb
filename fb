@@ -791,6 +791,10 @@ function _common_keys {
                 _cursor_push
                 set_dir $curr
             fi
+            if [ -h $curr ]; then
+                cursor_stack=()
+                set_dir $curr
+            fi
         fi
     fi
     # Open current file
