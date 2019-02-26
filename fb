@@ -349,9 +349,10 @@ function set_search_content {
 }
 
 function set_dir {
+    cd ${1:-.} > /dev/null 2>&1 || return
+
     dc_cursor=0
     dc_begin=0
-    cd ${1:-.} > /dev/null
 
     local dir_list=()
     local dir_list_draw=()
