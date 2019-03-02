@@ -14,6 +14,14 @@
 - confirmation dialogs before executing copy/move/delete operations
 - for other features please look at keybindings listed below
 
+#### Installation
+1. Copy fb script to /usr/local/bin
+2. export `EDITOR` and `TERMINAL` environment variables to override defaults (vi, st)
+
+#### Requirements
+- Linux OS
+- Bash version greater then 4.0
+
 #### List view example
 ```
 [vito ~/suckless]%
