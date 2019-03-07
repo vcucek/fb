@@ -122,6 +122,9 @@ function terminal_restore {
 APP_TERM=${TERMINAL:-st}
 APP_EDITOR=${EDITOR:-vi}
 
+FB_PATH="$0"
+FB_PID="$$"
+
 # bottom/top padding when scrolling
 PADDING=4
 # Variable representing visible file system area height
@@ -131,7 +134,7 @@ FULLSCREEN=false
 
 # cache files
 cache_dir=${HOME}/.cache/fb
-cache_trash=${HOME}/.local/share/Trash
+cache_dir_remotes=$cache_dir/remotes
 cache_selection=$cache_dir/selection
 cache_bookmarks=$cache_dir/bookmarks
 cache_cd=$cache_dir/dir
@@ -160,7 +163,7 @@ notification_message=""
 # dir,search,bookmarks,selection,marks,action
 mode="dir"
 # tree,flat
-dir_mode="tree"
+dir_mode="flat"
 
 # copy,move,delete
 action=""
@@ -193,6 +196,10 @@ last_key=""
 
 cursor_stack=()
 marks=()
+
+current_host=0
+hosts=("localhost")
+hosts_pwd=("$PWD")
 
 ## General Functions ###########################################################
 
@@ -363,13 +370,21 @@ function set_search_content {
 }
 
 function set_dir {
-    cd ${1:-.} > /dev/null 2>&1 || return
+    if [ $current_host = 0 ]; then
+        cd ${1:-""} > /dev/null 2>&1 || return
+        # Directories must always end with /
+        [ ${PWD: -1} != '/' ] && PWD="$PWD/"
+    else
+        _connect_host ${hosts[current_host]}
+    fi
     dc_cursor=0
-    set_dir_refresh
     current_dir=$PWD
+    set_dir_refresh
     mode="dir"
     status_message="Directory mode: 'q' to quit, '+' to see current mode actions"
     _marks_clear
+
+    hosts_pwd[current_host]=$PWD
 }
 
 function set_dir_refresh {
@@ -385,58 +400,25 @@ function set_dir_refresh {
 }
 
 function do_set_dir {
-    cd ${1:-.} > /dev/null 2>&1 || return
-
     dc_cursor=0
-    dc_begin=0
 
-    local dir_list=()
-    local dir_list_draw=()
-    local file_list=()
-    local file_list_draw=()
-
-    local tmp=()
-    local tmp_details=()
-
-    local sort_arg=
+    local ls_arg="-Np -1 --group-directories-first"
     if [ $sort_by = "name" ]; then
-        sort_arg=
+        ls_arg=$ls_arg
     elif [ $sort_by = "size" ]; then
-        sort_arg="-S"
+        ls_arg="$ls_arg -S"
     elif [ $sort_by = "modified" ]; then
-        sort_arg="-c"
+        ls_arg="$ls_arg -c"
     fi
-
     if $show_hidden; then
-        tmp=($(ls -AN -1 $sort_arg))
-        tmp_details=($(ls -ANlh -1 $sort_arg))
-    else
-        tmp=($(ls -N -1 $sort_arg))
-        tmp_details=($(ls -Nlh -1 $sort_arg))
+        ls_arg="$ls_arg -A"
     fi
 
-    # root directory fix
-    [[ $PWD == / ]] && PWD=
-
-    # sort directories first
-    for ((i=0; i<${#tmp[*]}; i++)); do
-        local file=${tmp[i]}
-        if [[ -d $file ]]; then
-
-            dir_list+=("$PWD/$file")
-            dir_list_draw+=("${tmp_details[i+1]}")
-        else
-            file_list+=("$PWD/$file")
-            file_list_draw+=("${tmp_details[i+1]}")
-        fi
-    done
-
-    files=("${dir_list[@]}")
-    files+=("${file_list[@]}")
-    dc_lines=("${dir_list_draw[@]}")
-    dc_lines+=("${file_list_draw[@]}")
-
-    current_dir=$PWD
+    local pwd_esc="${PWD//\//\\/}"
+    find_files="ls $ls_arg | sed 's/^/$pwd_esc/'"
+    find_files_dc="ls -hl $ls_arg | sed 's/total.*//'"
+    files=($(execute "$find_files"))
+    dc_lines=($(execute "$find_files_dc"))
 }
 
 function do_set_tree {
@@ -444,30 +426,37 @@ function do_set_tree {
     local dir_list=()
     local file_list=()
 
-    local find_arg=
-    local sort_arg=
+    local sort_cmd=
+    local find_print_arg=
 
     if [ $sort_by = "name" ]; then
-        sort_arg="-ifd"
+        find_print_arg="-printf '%p\n'"
+        sort_cmd="|sort -ifd"
     elif [ $sort_by = "size" ]; then
-        find_arg="-printf '%s\t%p\n'"
-        sort_arg="-gr"
+        find_print_arg="-printf '%s\t%p\n'"
+        sort_cmd="|sort -gr"
     elif [ $sort_by = "modified" ]; then
-        find_arg="-printf '%T+\t%p\n'"
-        sort_arg="-gr"
+        find_print_arg="-printf '%T+\t%p\n'"
+        sort_cmd="|sort -gr"
     fi
 
-    if $show_hidden; then
-        dir_list=($(eval find -L \'$1\' -mindepth 1 -maxdepth 1 -type d $find_arg \
-            | sort $sort_arg | cut -f 2))
-        file_list=($(eval find -L \'$1\' -mindepth 1 -maxdepth 1 -not -type d $find_arg \
-            | sort $sort_arg | cut -f 2))
-    else
-        dir_list=($(eval find -L \'$1\' -mindepth 1 -maxdepth 1 -type d $find_arg \
-            | grep -v '/\.' | sort $sort_arg | cut -f 2))
-        file_list=($(eval find -L \'$1\' -mindepth 1 -maxdepth 1 -not -type d $find_arg \
-            | grep -v '/\.' | sort $sort_arg | cut -f 2))
+    grep_cmd=
+    if ! $show_hidden; then
+        grep_cmd="|grep -v '/\.'"
     fi
+
+    find_dir="find -L \"$1\" -mindepth 1 -maxdepth 1 -type d $find_print_arg \
+        $grep_cmd \
+        $sort_cmd \
+        | cut -f 2 \
+        | sed 's:\$:/:'"
+    find_file="find -L \"$1\" -mindepth 1 -maxdepth 1 -not -type d $find_print_arg \
+        $grep_cmd \
+        $sort_cmd \
+        | cut -f 2"
+
+    dir_list=($(execute "$find_dir"))
+    file_list=($(execute "$find_file"))
 
     local prefix=$(printf "|%*s" $(( $dir_level )) )
     prefix=${prefix// /"   |"}
@@ -477,7 +466,7 @@ function do_set_tree {
     for ((i=0; i<${#dir_list[*]}; i++)); do
         d="${dir_list[i]}"
         files+=($d)
-        dc_lines+=($prefix${d##*/})
+        dc_lines+=($prefix${d##$1})
         is_expanded=${files_expanded["$d"]}
         if [ ! -z ${is_expanded:+x} ]; then
             ((dir_level++))
@@ -535,7 +524,7 @@ function render {
 
     # Print header and navigation bar
     row "---------------------------------------------------------------------------------------"
-    row $PWD $col_nav
+    row "${hosts[$current_host]}:$PWD" $col_nav
     row "---------------------------------------------------------------------------------------"
 
     dc_begin=$(( $dc_cursor - $dc_begin < $PADDING ? $dc_cursor - $PADDING : $dc_begin ))
@@ -553,22 +542,26 @@ function render {
         color_bg=""
 
         # Check if directory
-        if [ -d $file ]; then
-            color_fg=$col_folder
-        # Check if char device
-        elif [ -c $file ]; then
-            color_fg=$col_char
-        # Check if socket
-        elif [ -S $file ]; then
-            color_fg=$col_socket
-        # Check if executable
-        elif [ -x $file ]; then
-            color_fg=$col_exec
-        fi
-        # Check if link
-        if [ -h $file ]; then
-            color_fg=$col_link
-        fi
+        case $file in 
+            */)
+            color_fg=$col_folder;;
+            *) 
+            # Check if char device
+            if [ -c $file ]; then
+                color_fg=$col_char
+            # Check if socket
+            elif [ -S $file ]; then
+                color_fg=$col_socket
+            # Check if executable
+            elif [ -x $file ]; then
+                color_fg=$col_exec
+            fi
+            # Check if link
+            if [ -h $file ]; then
+                color_fg=$col_link
+            fi
+        esac
+
 
         # Check if selected
         if [ ! -z "$file" ]; then
@@ -626,6 +619,7 @@ function _initialize() {
 
     # initialize cache
     mkdir -p $cache_dir
+    mkdir -p $cache_dir_remotes
     touch $cache_selection
     touch $cache_bookmarks
 
@@ -634,6 +628,18 @@ function _initialize() {
     trap _on_resume CONT
     trap _on_terminate EXIT
     trap 'terminal_fetch; render' WINCH
+
+    # register hosts
+    hosts+=($(ls -1 $cache_dir_remotes))
+    #for (( i=1; i < ${#hosts[@]}; i++ )); do
+    #    # initialize remote home directory
+    #    local conn_arg="ControlPath $cache_dir_remotes/${hosts[i]}"
+    #    hosts_pwd[i]=$(ssh -o $conn_arg $! "pwd")
+    #done
+    # Directories must always end with /
+    # [ ${PWD: -1} != '/' ] && PWD="$PWD/"
+
+    set_dir $PWD
 }
 
 # Terminal hooks
@@ -686,6 +692,44 @@ function _execute {
 
 ## Mode actions ############################################################
 
+view_pids=($FB_PID)
+view_hosts=()
+view_current=0
+
+function execute {
+    local host="${hosts[$current_host]}"
+    if [ "$host" = "localhost" ]; then
+        eval "$@"
+    else
+        local conn="$cache_dir_remotes/$host"
+        local conn_arg="ControlPath $cache_dir_remotes/$host"
+        local cmd="cd \"$PWD\"; $@"
+        if [ -e "$conn" ]; then
+            ssh -o "$conn_arg" $host "$cmd"
+        else
+            ssh -fTM -o "$connection" $host "sleep 1000"
+            ssh -o "$conn_arg" $host "$cmd"
+        fi
+    fi
+}
+
+function _connect_host {
+    local host="${hosts[$1]}"
+    local conn="$cache_dir_remotes/$host"
+    local conn_arg="ControlPath $cache_dir_remotes/$host"
+    if [ -e "$conn" ]; then
+        PWD=$(ssh -o $conn_arg $host "pwd")
+        echo $PWD
+    else
+        row_nav "Remote (user@hostname): "; _read_fb host
+        ssh -fTM -o $conn_arg $host "sleep 1000"
+        PWD=$(ssh -o $conn_arg $host "pwd")
+        row_nav_end
+    fi
+    # Directories must always end with /
+    [ ${PWD: -1} != '/' ] && PWD="$PWD/"
+}
+
 function _view_keys {
     # switch flat/tree folder view
     if [[ $key = '~' ]]; then 
@@ -694,7 +738,24 @@ function _view_keys {
         else
             dir_mode="flat"
         fi
-        set_dir
+        set_dir $PWD
+    fi
+    if [[ $key = '@' ]]; then 
+        local host="suzy@192.168.1.4"
+        local host_index=${#hosts[@]}
+        hosts[host_index]="$host"
+        _connect_host $host_index
+        current_host=${#hosts[@]}
+
+        hosts[$current_host]="$host"
+        hosts_pwd[$current_host]="$PWD"
+        set_dir $PWD
+    fi
+    # Switch between hosts with tab key
+    if [[ $key = $'\x09' ]]; then 
+        current_host=$(( (current_host+1) % ${#hosts[@]} ))
+        PWD=${hosts_pwd[$current_host]}
+        set_dir $PWD
     fi
     if [[ $key_l = 'wr' ]]; then 
         if [[ $mode = "selection" ]]; then
@@ -836,23 +897,23 @@ function _navigate_tree_keys {
     # Expand current folder
     if [[ $key = 'l' || $key = $'\e[C' ]]; then
         file="${files[dc_cursor]}"
-        if [ -d $file -o -h $file ]; then
+        if [ ${file: -1} = '/' -o -h $file ]; then
             if [ -z "${files_expanded["$file"]}" ]; then
                 files_expanded["$file"]=true
                 set_dir_refresh
             fi
-            key="consumed"
         fi
+        key="consumed"
     fi
     if [[ $key = 'h' || $key = $'\e[D' ]]; then
         file="${files[dc_cursor]}"
-        if [ -d $file -o -h $file ]; then
+        if [ ${file: -1} = '/' -o -h $file ]; then
             if [ ! -z "${files_expanded["$file"]}" ]; then
                 files_expanded["$file"]=
                 set_dir_refresh
             fi
-            key="consumed"
         fi
+        key="consumed"
     fi
 }
 
@@ -949,14 +1010,17 @@ function _common_keys {
     if [[ $key = 'l' || $key = $'\e[C' || $key = '' ]]; then
         if [ ${#files[@]} -ne 0 ]; then
             local curr="${files[dc_cursor]}"
-            if [ -d $curr ]; then
-                _cursor_push
-                set_dir $curr
-            fi
-            if [ -h $curr ]; then
-                cursor_stack=()
-                set_dir $curr
-            fi
+            case $curr in 
+                */)
+                    _cursor_push
+                    set_dir $curr;;
+                *)
+                # Check if link
+                if [ -h $file ]; then
+                    cursor_stack=()
+                    set_dir $curr
+                fi
+            esac
         fi
     fi
     # Open current file
@@ -1246,9 +1310,6 @@ _initialize
 if [[ $1 = "-b" ]]; then
     # show bookmarks 
     set_bookmarks
-else
-    # show current directory 
-    set_dir $PWD
 fi
 
 while :
