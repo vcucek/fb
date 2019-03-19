@@ -51,8 +51,8 @@ if [[ $1 = "--help" ]]; then
     echo ' v  : mark current file'
     echo ' V  : mark all files in current folder'
     echo ' c  : copy marked files to clipboard as command arguments'
-    echo ' y  : add marked files to selection'
-    echo ' Y : append marked files to selection'
+    echo ' y  : set marked files to selection'
+    echo ' Y  : append marked files to selection'
     echo ' x  : clear selection and marked files'
     echo ' '
     echo 'Selection:'
@@ -184,6 +184,7 @@ dc_lines=()
 files=()
 current_file=
 current_dir=
+current_pwd=
 
 # name, access, modified, size
 sort_by="name"
@@ -194,7 +195,6 @@ declare -A files_marked
 
 last_key=""
 
-cursor_stack=()
 marks=()
 
 current_host=0
@@ -217,20 +217,73 @@ function _read_fb {
     stty -echo
 }
 
-## Cursor stack functions ######################################################
-
-function _cursor_push {
-    cursor_stack+=($dc_cursor)
+function _cd {
+    local host="${hosts[current_host]}"
+    if [ "$host" = "localhost" ]; then
+        command cd "$@" || return 1
+        hosts_pwd[current_host]=$PWD
+        current_pwd="${hosts_pwd[current_host]}"
+    else
+        current_pwd="${hosts_pwd[current_host]}"
+        hosts_pwd[current_host]=$(_execute_remote "cd \"$@\"; pwd")
+        current_pwd="${hosts_pwd[current_host]}"
+    fi
+    [ ${current_pwd: -1} != '/' ] && current_pwd="$current_pwd/"
+    return 0
 }
 
-function _cursor_pop {
-    if [ ${#cursor_stack[@]} -eq 0 ]; then
-        dc_cursor=0
+function _execute {
+    local host="${hosts[current_host]}"
+    if [ "$host" = "localhost" ]; then
+        eval "$@"
     else
-        local val=${cursor_stack[-1]}
-        unset 'cursor_stack[ ${#cursor_stack[@]}-1 ]'
-        dc_cursor=$val
-    fi;
+        _execute_remote "$@"
+    fi
+}
+
+ssh_path="ControlPath $cache_dir_remotes/%r@%h"
+ssh_master="ControlMaster=auto"
+ssh_persist="ControlPersist 1h"
+
+function _ssh_current_host {
+    ssh -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" "${hosts[current_host]}" "$@"
+}
+
+function _execute_remote {
+    _ssh_current_host "cd \"$current_pwd\"; $@"
+}
+
+function _execute_remote_pty {
+    _ssh_current_host -t "cd \"$current_pwd\"; $@"
+}
+
+function _connect_host {
+    local host_id="$1"
+    local host="$2"
+    local socket="$cache_dir_remotes/$host"
+    if [ ! -e "$socket" ]; then
+        #ssh -fTM -o $conn_arg $host "sleep 10000"
+        ssh -fN -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" "$host" || return 1
+    fi
+    local host_pwd=$(ssh -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" "$host" "pwd")
+
+    # Directories must always end with /
+    [ ${host_pwd: -1} != '/' ] && host_pwd="$host_pwd/"
+
+    hosts[$host_id]="$host"
+    hosts_pwd[$host_id]=$host_pwd
+    return 0
+}
+
+## Cursor functions ############################################################
+
+function _cursor_to_file {
+    for (( i=1; i<${#files[@]}; i++ )); do
+        if [[ "${files[i]}" == "$1" ]]; then
+            dc_cursor=$i
+            return;
+        fi
+    done
 }
 
 ## Bookmarks functions #########################################################
@@ -245,10 +298,11 @@ function _bookmark_remove {
     sed -i "$((dc_cursor + 1))d" $cache_bookmarks
 }
 
-## Marks functions #########################################################
+## Marks functions #############################################################
 
 function _marks_add {
-    files_marked[$current_file]=true
+    local file="${files[dc_cursor]}"
+    files_marked[$file]=true
 }
 function _marks_add_all {
     render_loading
@@ -259,10 +313,11 @@ function _marks_add_all {
 
 function _marks_toggle {
     # Check if selected
-    if [ ! -z "${files_marked[$current_file]}" ]; then
-        files_marked[$current_file]=
+    local file="${files[dc_cursor]}"
+    if [ ! -z "${files_marked[$file]}" ]; then
+        files_marked[$file]=
     else
-        files_marked[$current_file]=true
+        files_marked[$file]=true
     fi
 }
 
@@ -276,13 +331,23 @@ function _marks_args {
 
 function _marks_to_selection {
     if [ ${#files_marked[@]} -ne 0 ]; then
-        printf "%s\n" "${!files_marked[@]}" > $cache_selection
+        local host="${hosts[current_host]}"
+        if [ "$host" = "localhost" ]; then
+            printf "%s\n" "${!files_marked[@]}" > $cache_selection
+        else
+            printf "\"$host:'%s'\"\n" "${!files_marked[@]}" > $cache_selection
+        fi
         sed -i "s/ *#.*//g; /^$/d" $cache_selection
     fi
 }
 function _marks_to_selection_append {
     if [ ${#files_marked[@]} -ne 0 ]; then
-        printf "%s\n" "${!files_marked[@]}" >> $cache_selection
+        local host="${hosts[current_host]}"
+        if [ "$host" = "localhost" ]; then
+            printf "%s\n" "${!files_marked[@]}" >> $cache_selection
+        else
+            printf "\"$host:'%s'\"\n" "${!files_marked[@]}" >> $cache_selection
+        fi
         sed -i "s/ *#.*//g; /^$/d" $cache_selection
     fi
 }
@@ -301,14 +366,12 @@ function _selection_clear {
 ## Setup Content Functions #####################################################
 
 function set_action {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     mode="action"
     action=$1
     status_message=$2
 }
 
 function set_bookmarks {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     dc_cursor=0
     dc_lines=()
     # replace empty lines with ~ to make files array indexes consistent with file lines
@@ -319,7 +382,6 @@ function set_bookmarks {
 
 function set_marks {
     if [ ${#files_marked[@]} -ne 0 ]; then
-        if [[ $mode = "dir" ]]; then _cursor_push; fi
         dc_cursor=0
         dc_lines=()
         files=("${!files_marked[@]}")
@@ -329,7 +391,6 @@ function set_marks {
 }
 
 function set_selection {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     dc_cursor=0
     dc_lines=()
     files=($(cat $cache_selection))
@@ -338,7 +399,6 @@ function set_selection {
 }
 
 function set_filter {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     render_loading
     dc_cursor=0
     dc_lines=()
@@ -348,9 +408,8 @@ function set_filter {
 }
 
 function set_search {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     render_loading
-    found=($(find $PWD -iname "*$1*" ))
+    found=($(_execute "find $current_pwd -iname \"*$1*\""))
     dc_cursor=0
     dc_lines=()
     files=("${found[@]}")
@@ -359,9 +418,9 @@ function set_search {
 }
 
 function set_search_content {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     render_loading
-    found=($(grep -Isr "$1"))
+    #TODO check multiple words
+    found=($(_execute grep -Isr "$1"))
     dc_cursor=0
     dc_lines=($(printf "%s\n" "${found[@]}"))
     files=($(printf "%s\n" "${found[@]}" | sed "s/:.*//g"))
@@ -369,56 +428,76 @@ function set_search_content {
     status_message="Search results: 'Esc' to quit, '+' to see current mode actions"
 }
 
-function set_dir {
-    if [ $current_host = 0 ]; then
-        cd ${1:-""} > /dev/null 2>&1 || return
-        # Directories must always end with /
-        [ ${PWD: -1} != '/' ] && PWD="$PWD/"
-    else
-        _connect_host ${hosts[current_host]}
+function set_host {
+    for (( i=1; i<${#hosts[@]}; i++ )); do
+        if [[ "${hosts[i]}" == "$1" ]]; then
+            if _connect_host $i "${hosts[i]}"; then
+                current_host=$i
+                set_dir
+                return 0
+            else
+                return 1
+            fi
+        fi
+    done
+    local host_index=${#hosts[@]}
+    if _connect_host $host_index $1; then
+        current_host=$host_index
+        set_dir
     fi
+}
+
+
+function set_dir {
+    local old_pwd=$current_pwd
+    if ! _cd ${1:-""} > /dev/null 2>&1; then
+        return 1
+    fi
+    
     dc_cursor=0
-    current_dir=$PWD
+    current_dir=$current_pwd
     set_dir_refresh
     mode="dir"
     status_message="Directory mode: 'q' to quit, '+' to see current mode actions"
     _marks_clear
 
-    hosts_pwd[current_host]=$PWD
+    if [[ "$old_pwd" != "$current_pwd" ]]; then
+        _cursor_to_file $old_pwd
+    else
+        _cursor_to_file $current_file
+    fi
 }
 
 function set_dir_refresh {
     files=()
     dc_lines=()
     if [[ $dir_mode = "flat" ]]; then
-        do_set_dir $PWD
+        do_set_dir $current_pwd
     fi
     if [[ $dir_mode = "tree" ]]; then
         dir_level=0
-        do_set_tree $PWD
+        do_set_tree $current_pwd
     fi
 }
 
 function do_set_dir {
-    dc_cursor=0
-
     local ls_arg="-Np -1 --group-directories-first"
     if [ $sort_by = "name" ]; then
         ls_arg=$ls_arg
     elif [ $sort_by = "size" ]; then
         ls_arg="$ls_arg -S"
     elif [ $sort_by = "modified" ]; then
-        ls_arg="$ls_arg -c"
+        ls_arg="$ls_arg -tc"
     fi
     if $show_hidden; then
         ls_arg="$ls_arg -A"
     fi
 
-    local pwd_esc="${PWD//\//\\/}"
+    local pwd_esc="${1//\//\\/}"
     find_files="ls $ls_arg | sed 's/^/$pwd_esc/'"
     find_files_dc="ls -hl $ls_arg | sed 's/total.*//'"
-    files=($(execute "$find_files"))
-    dc_lines=($(execute "$find_files_dc"))
+    files=($(_execute "$find_files"))
+    dc_lines=($(_execute "$find_files_dc"))
 }
 
 function do_set_tree {
@@ -455,8 +534,8 @@ function do_set_tree {
         $sort_cmd \
         | cut -f 2"
 
-    dir_list=($(execute "$find_dir"))
-    file_list=($(execute "$find_file"))
+    dir_list=($(_execute "$find_dir"))
+    file_list=($(_execute "$find_file"))
 
     local prefix=$(printf "|%*s" $(( $dir_level )) )
     prefix=${prefix// /"   |"}
@@ -524,7 +603,7 @@ function render {
 
     # Print header and navigation bar
     row "---------------------------------------------------------------------------------------"
-    row "${hosts[$current_host]}:$PWD" $col_nav
+    row "${hosts[$current_host]}:$current_pwd" $col_nav
     row "---------------------------------------------------------------------------------------"
 
     dc_begin=$(( $dc_cursor - $dc_begin < $PADDING ? $dc_cursor - $PADDING : $dc_begin ))
@@ -573,13 +652,12 @@ function render {
         fi
         # Check if current dc_cursor
         if [ $file_index -eq $dc_cursor ]; then
-            current_file=$file
             if [[ $mode = "dir" ]]; then
+                current_file=$file
                 current_dir=${file%/*}
             fi
             color_fg=$col_cursor
         fi
-
         row ${file_draw:-$file} $color_fg $color_bg
     done
 
@@ -631,15 +709,7 @@ function _initialize() {
 
     # register hosts
     hosts+=($(ls -1 $cache_dir_remotes))
-    #for (( i=1; i < ${#hosts[@]}; i++ )); do
-    #    # initialize remote home directory
-    #    local conn_arg="ControlPath $cache_dir_remotes/${hosts[i]}"
-    #    hosts_pwd[i]=$(ssh -o $conn_arg $! "pwd")
-    #done
-    # Directories must always end with /
-    # [ ${PWD: -1} != '/' ] && PWD="$PWD/"
-
-    set_dir $PWD
+    set_dir
 }
 
 # Terminal hooks
@@ -647,7 +717,7 @@ function _initialize() {
 function _on_terminate(){
     render_clear
     terminal_restore
-    printf "%s" "$PWD" > $cache_cd
+    printf "%s" "$current_pwd" > $cache_cd
     exit 0
 }
 
@@ -665,7 +735,7 @@ function _on_resume(){
 function _exit(){
     render_clear
     terminal_restore
-    printf "%s" "$PWD" > $cache_cd
+    printf "%s" "$current_pwd" > $cache_cd
     exit 0
 }
 
@@ -675,60 +745,22 @@ function _run {
     terminal_restore
     cd $current_dir
     eval "$SHELL"
-    cd $PWD
+    cd $current_pwd
     terminal_setup
 }
 
-function _execute {
+function _run_with {
     render_clear
     terminal_restore
     if [ ${#files_marked[@]} -ne 0 ]; then
-        eval 'printf "%s\n" "${!files_marked[@]}" | xargs -n 1 -I{} $1'
+        eval 'printf "%s\n" "${!files_marked[@]}" | xargs -n 1 -I"{}" $1'
     else
-        eval 'printf "${files[dc_cursor]}" | xargs -n 1 -I{} $1'
+        eval 'printf "${files[dc_cursor]}" | xargs -n 1 -I"{}" $1'
     fi
     terminal_setup
 }
 
 ## Mode actions ############################################################
-
-view_pids=($FB_PID)
-view_hosts=()
-view_current=0
-
-function execute {
-    local host="${hosts[$current_host]}"
-    if [ "$host" = "localhost" ]; then
-        eval "$@"
-    else
-        local conn="$cache_dir_remotes/$host"
-        local conn_arg="ControlPath $cache_dir_remotes/$host"
-        local cmd="cd \"$PWD\"; $@"
-        if [ -e "$conn" ]; then
-            ssh -o "$conn_arg" $host "$cmd"
-        else
-            ssh -fTM -o "$connection" $host "sleep 1000"
-            ssh -o "$conn_arg" $host "$cmd"
-        fi
-    fi
-}
-
-function _connect_host {
-    local host="${hosts[$1]}"
-    local conn="$cache_dir_remotes/$host"
-    local conn_arg="ControlPath $cache_dir_remotes/$host"
-    if [ -e "$conn" ]; then
-        PWD=$(ssh -o $conn_arg $host "pwd")
-        echo $PWD
-    else
-        row_nav "Remote (user@hostname): "; _read_fb host
-        ssh -fTM -o $conn_arg $host "sleep 1000"
-        PWD=$(ssh -o $conn_arg $host "pwd")
-        row_nav_end
-    fi
-    # Directories must always end with /
-    [ ${PWD: -1} != '/' ] && PWD="$PWD/"
-}
 
 function _view_keys {
     # switch flat/tree folder view
@@ -738,24 +770,18 @@ function _view_keys {
         else
             dir_mode="flat"
         fi
-        set_dir $PWD
+        set_dir
     fi
     if [[ $key = '@' ]]; then 
-        local host="suzy@192.168.1.4"
-        local host_index=${#hosts[@]}
-        hosts[host_index]="$host"
-        _connect_host $host_index
-        current_host=${#hosts[@]}
-
-        hosts[$current_host]="$host"
-        hosts_pwd[$current_host]="$PWD"
-        set_dir $PWD
+        local host="unknown"
+        row_nav "Remote (user@hostname): "; _read_fb host
+        set_host $host
+        row_nav_end
     fi
     # Switch between hosts with tab key
     if [[ $key = $'\x09' ]]; then 
         current_host=$(( (current_host+1) % ${#hosts[@]} ))
-        PWD=${hosts_pwd[$current_host]}
-        set_dir $PWD
+        set_dir "${hosts_pwd[current_host]}"
     fi
     if [[ $key_l = 'wr' ]]; then 
         if [[ $mode = "selection" ]]; then
@@ -792,23 +818,31 @@ function _view_keys {
 function _action_keys {
     if [[ $key = 'y' ]]; then 
         render_loading
+        local conn_arg="ControlPath $cache_dir_remotes/%r@%h"
         if [[ $action = "copy" ]]; then 
-            printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} cp -r '{}' $current_dir
+            local host="${hosts[current_host]}"
+            if [ "$host" = "localhost" ]; then
+                printf "%s\n" "${files[@]}" | \
+                    xargs -n 100 -P 0 -I{} scp -o "$conn_arg" -r '{}' $current_dir
+            else
+                printf "%s\n" "${files[@]}" | \
+                    xargs -n 100 -P 0 -I{} scp -o "$conn_arg" -r '{}' $host:$current_dir
+            fi
         fi
         if [[ $action = "move" ]]; then 
-            printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} mv '{}' $current_dir
+            printf "%s\n" "${files[@]}" | \
+                xargs -n 100 -P 0 -I{} mv '{}' $current_dir
         fi
         if [[ $action = "delete" ]]; then 
-            printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} rm -r '{}'
+            printf "%s\n" "${files[@]}" | \
+                xargs -n 100 -P 0 -I{} rm -r '{}'
         fi
         _marks_clear
         _selection_clear
-        set_dir .
-        _cursor_pop
+        set_dir
     fi
     if [[ $key = 'n' || $key = 'q' ]]; then 
-        set_dir .
-        _cursor_pop
+        set_dir
     fi
 }
 
@@ -837,7 +871,10 @@ function _navigate_keys {
     if [[ $last_key = 'f' ]]; then 
         last_goto_key=$key
         for (( i=$(( $dc_cursor + 1 )); i<${#files[@]}; i++ )); do
-            if [[ "${files[i]##*/}" == "$key"* ]]; then
+            local fname=${files[i]}
+            [ ${fname: -1} == '/' ] && fname="${fname::-1}"
+            fname=${fname##*/}
+            if [[ "$fname" == "$key"* ]]; then
                 dc_cursor=$i
                 key="consumed"
                 return
@@ -845,7 +882,10 @@ function _navigate_keys {
         done
         # if not found go again from beginning
         for (( i=0; i<$dc_cursor; i++ )); do
-            if [[ "${files[$i]##*/}" == "$key"* ]]; then
+            local fname=${files[i]}
+            [ ${fname: -1} == '/' ] && fname="${fname::-1}"
+            fname=${fname##*/}
+            if [[ "$fname" == "$key"* ]]; then
                 dc_cursor=$i
                 key="consumed"
                 return
@@ -955,7 +995,6 @@ function _mark_keys {
         # switch to directory mode 
         if [[ $mode = "selection" ]]; then
             set_dir
-            _cursor_pop
         fi
     fi
     # copy marked to clipboard as command arguments
@@ -1009,46 +1048,58 @@ function _common_keys {
     # Enter current folder
     if [[ $key = 'l' || $key = $'\e[C' || $key = '' ]]; then
         if [ ${#files[@]} -ne 0 ]; then
-            local curr="${files[dc_cursor]}"
-            case $curr in 
-                */)
-                    _cursor_push
-                    set_dir $curr;;
-                *)
-                # Check if link
-                if [ -h $file ]; then
-                    cursor_stack=()
-                    set_dir $curr
-                fi
-            esac
+            set_dir "${files[dc_cursor]}"
         fi
     fi
     # Open current file
     if [[ $key = '' ]]; then
-        local curr="${files[dc_cursor]}"
-        if [ -f $curr ]; then
-            xdg-open $curr &>/dev/null &
+        local file="${files[dc_cursor]}"
+        if [ -f $file ]; then
+            xdg-open $file &>/dev/null &
             disown
         fi
     fi
     # edit current file
     if [[ $key = 'O' ]]; then
-        /bin/bash -c "${APP_EDITOR} \"${files[dc_cursor]}\""
+        local host="${hosts[current_host]}"
+        if [ "$host" = "localhost" ]; then
+            /bin/bash -c "${APP_EDITOR} \"${files[dc_cursor]}\""
+        else
+            local cmd="cd \"$current_pwd\"; ${APP_EDITOR} \"${files[dc_cursor]}\""
+            _ssh_current_host -t "$cmd"
+        fi
         terminal_setup
     fi
     # edit current file in a new window
     if [[ $key = 'o' ]]; then
-        nohup ${APP_TERM} -e ${APP_EDITOR} ${files[dc_cursor]} >/dev/null 2>&1 &
+        local host="${hosts[current_host]}"
+        if [ "$host" = "localhost" ]; then
+            nohup ${APP_TERM} -e ${APP_EDITOR} ${files[dc_cursor]} >/dev/null 2>&1 &
+        else
+            local cmd="cd \"$current_pwd\"; ${APP_EDITOR} \"${files[dc_cursor]}\""
+            nohup ${APP_TERM} -e \
+                ssh -t -o "$ssh_path" -o "$ssh_master" -o $ssh_persist \
+                "$host" "$cmd" >/dev/null 2>&1 &
+        fi
     fi
     # open terminal
     if [[ $key = 't' ]]; then
-        nohup ${APP_TERM} >/dev/null 2>&1 &
+        local host="${hosts[current_host]}"
+        if [ "$host" = "localhost" ]; then
+            nohup ${APP_TERM} >/dev/null 2>&1 &
+        else
+            local cmd="cd \"$current_pwd\";"
+            cmd=$cmd'$SHELL'
+            nohup ${APP_TERM} -e \
+                ssh -t -o "$ssh_path" -o "$ssh_master" -o $ssh_persist \
+                "$host" "$cmd" >/dev/null 2>&1 &
+        fi
     fi
     # run program using current file
     if [[ $key = 'e'  ]]; then
-        local _program=
-        row_nav "execute with: "; _read_fb _program
-        [ $_program ] && _execute $_program 
+        local cmd=
+        row_nav "Execute with (use {} as file arg): "; _read_fb cmd
+        [ $cmd ] && _run_with $cmd 
     fi
     # open shell
     if [[ $key = ':' ]]; then
@@ -1090,12 +1141,6 @@ function _search_mode_keys {
         echo 'Search mode actions: '
         echo ' d  : delete file or folder '
     fi
-    if [[ $key = 'l' || $key = $'\e[C' || $key = '' ]]; then
-        local curr="${files[dc_cursor]}"
-        if [ -d $curr ]; then
-            cursor_stack=()
-        fi
-    fi
     # Command delete selected files
     if [[ $key = 'd' ]]; then
         if [ ${#files_marked[@]} -ne 0 ]; then
@@ -1126,8 +1171,12 @@ function _bookmarks_mode_keys {
     if [[ $key = 'r' ]]; then
         _bookmark_remove
     fi
-    if [[ $key = 'l' || $key = $'\e[C' || $key = "" ]]; then
-        cursor_stack=()
+    if [[ $key = 'l' ]]; then
+        local host=${files[dc_cursor]}
+        if [[ $host =~ '@' ]]; then
+            set_host $host
+            key="consume"
+        fi
     fi
     if [[ $key = 'b' ]]; then
         key=$'\x1b'
@@ -1192,7 +1241,6 @@ function _dir_mode_keys {
     # Go back one folder
     if [[ $key = 'h' || $key = $'\e[D' || $key = $'\x7f' ]]; then
         set_dir ..
-        _cursor_pop
         key="consume"
     fi
     # show hiddne files
@@ -1205,16 +1253,19 @@ function _dir_mode_keys {
         set_dir .
         key="consume"
     fi
+    # sort by name
     if [[ $key_l = 'wn' ]]; then
         sort_by="name"
         set_dir .
         key="consume"
     fi
+    # sort by modified
     if [[ $key_l = 'wm' ]]; then
         sort_by="modified"
         set_dir .
         key="consume"
     fi
+    # sort by size
     if [[ $key_l = 'ws' ]]; then
         sort_by="size"
         set_dir .
@@ -1246,14 +1297,14 @@ function _dir_mode_keys {
         key="consume"
     fi
     # Command paste selection into
-    if [[ $key = 'P' && -d $current_file ]]; then
+    if [[ $key = 'P' && $current_file == */ ]]; then
         set_selection
         current_dir=$current_file
         set_action "copy" "Paste listed files to '$(basename $current_dir)'? (y/n)"
         key="consume"
     fi
     # Command move selection into
-    if [[ $key = 'M' && -d $current_file ]]; then
+    if [[ $key = 'M' && $current_file == */ ]]; then
         set_selection
         current_dir=$current_file
         set_action "move" "Move listed files to '$(basename $current_dir)'? (y/n)"
@@ -1261,19 +1312,14 @@ function _dir_mode_keys {
     fi
     # Command rename current file
     if [[ $key = 'r' ]]; then
-        _cursor_push
         row_nav "New name: "
-
         _read_fb name
-
         terminal_restore
         rename -i $(basename "${files[dc_cursor]}") "$name" "${files[dc_cursor]}"
         terminal_setup
+        row_nav_end
 
-        #row_nav_end
-        printf "\033[u"
-        set_dir .
-        _cursor_pop
+        set_dir_refresh
         key="consume"
     fi
     # Command delete selected files
@@ -1367,7 +1413,6 @@ do
         # h, left, backspace, esc
         if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' || $key = $'\x1b' ]]; then
             set_dir 
-            _cursor_pop
         fi
     fi
 
