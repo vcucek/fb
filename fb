@@ -625,9 +625,6 @@ function row {
 
 function render {
 
-    current_dir=$current_pwd
-    current_file=""
-
     dc_canvas_height=0
 
     # Clamp rows to terminal height, specified as LINES
@@ -701,8 +698,10 @@ function render {
                 fi
                 if [[ $dir_mode = "tree" ]]; then
                     current_file=$file
-                    current_dir=${file%/*}
+                    current_dir=${file%/*}/
                 fi
+            else
+                current_file=$file
             fi
             color_fg=$col_cursor
         fi
@@ -801,11 +800,18 @@ function _exit(){
 
 function _run {
     render_clear
-    echo Executing subshell...
+    echo Executing subshell... Type 'exit' to return to fb.
     terminal_restore
-    cd $current_dir
-    eval "$SHELL"
-    cd $current_pwd
+
+    local host="${hosts[current_host]}"
+    if [ "$host" = "" ]; then
+        command cd "$@"
+        eval "$SHELL"
+    else
+        _execute_remote_pty $SHELL
+    fi
+
+    _cd $current_pwd
     terminal_setup
 }
 
@@ -1209,8 +1215,8 @@ function _common_keys {
             done
             _marks_clear
             notification_message="Selection added to bookmarks"
-        elif [ -n "$current_file" ]; then
-            _bookmark_add "$current_file"
+        elif [ -n "$current_dir" ]; then
+            _bookmark_add "$current_dir"
             notification_message="Current folder added to bookmarks"
         fi
     fi
