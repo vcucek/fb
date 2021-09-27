@@ -16,6 +16,13 @@ if [[ $1 = "--help" ]]; then
     echo 'Enable cd on exit by adding alias to ~/.bashrc file:'
     echo 'alias ff='"'"'fb; cd $(fb -d)'"'"
     echo ' '
+    echo 'View commands: '
+    echo ' ~   : Switch between tree and list view'
+    echo ' @   : Connect to SSH host'
+    echo ' Tab : Switch between connected SSH hosts'
+    echo ' J,K : Increase/decrease drawing area'
+    echo ' F   : Use all avaiable drawing space'
+    echo ' '
     echo 'Movements:'
     echo ' Keys     : 'hjkl' or up, down, left, right arrows'
     echo ' Return   : Open file using xdg-open or enter folder'
@@ -28,8 +35,8 @@ if [[ $1 = "--help" ]]; then
     echo ' '
     echo 'Actions:'
     echo ' q     : Exit script, mode, or dialog'
-    echo ' O     : Edit file using default editor or vi'
-    echo ' o     : Edit file using default editor or vi in a new terminal window (st by default)'
+    echo ' I     : Edit file using default editor or vi'
+    echo ' i     : Edit file using default editor or vi in a new terminal window (st by default)'
     echo ' t     : open new terminal window (st by default)'
     echo ' a     : Show hidden files/folders'
     echo ' e     : Execute command using current or marked files'
@@ -50,9 +57,9 @@ if [[ $1 = "--help" ]]; then
     echo 'Select:'
     echo ' v  : mark current file'
     echo ' V  : mark all files in current folder'
-    echo ' c  : copy marked files to clipboard as command arguments'
-    echo ' y  : add marked files to selection'
-    echo ' Y : append marked files to selection'
+    echo ' gc : copy marked files to clipboard as command arguments'
+    echo ' y  : set marked files to selection'
+    echo ' Y  : append marked files to selection'
     echo ' x  : clear selection and marked files'
     echo ' '
     echo 'Selection:'
@@ -62,25 +69,19 @@ if [[ $1 = "--help" ]]; then
     echo ' x  : clear selection and marked files'
     echo ' '
     echo 'Edit:'
-    echo ' n  : create named file (add "/" sufix to create a folder)'
-    echo ' r  : rename current file or folder'
+    echo ' o  : create named file (add "/" sufix to create a folder)'
+    echo ' c  : rename current file or folder'
     echo ' p  : copy selection to current directory'
     echo ' P  : copy selection into folder under cursor'
     echo ' m  : move selection to current directory'
     echo ' M  : move selection into folder under cursor'
     echo ' d  : delete marked files or folders'
     echo ' '
-    echo 'View:'
-    echo ' J : Increase height'
-    echo ' K : Decrease height'
-    echo ' F : Switch to full screen mode'
-    echo ' ~ : Switch between tree and list view'
-    echo ' wr: Refresh view'
-    echo ' '
     echo 'File sorting:'
     echo ' wn: sort by name'
     echo ' wm: sort by modified time'
     echo ' ws: sort by size'
+    echo ' wr: Refresh view'
     exit 0
 fi
 
@@ -122,6 +123,9 @@ function terminal_restore {
 APP_TERM=${TERMINAL:-st}
 APP_EDITOR=${EDITOR:-vi}
 
+FB_PATH="$0"
+FB_PID="$$"
+
 # bottom/top padding when scrolling
 PADDING=4
 # Variable representing visible file system area height
@@ -131,7 +135,7 @@ FULLSCREEN=false
 
 # cache files
 cache_dir=${HOME}/.cache/fb
-cache_trash=${HOME}/.local/share/Trash
+cache_dir_remotes=$cache_dir/remotes
 cache_selection=$cache_dir/selection
 cache_bookmarks=$cache_dir/bookmarks
 cache_cd=$cache_dir/dir
@@ -160,7 +164,7 @@ notification_message=""
 # dir,search,bookmarks,selection,marks,action
 mode="dir"
 # tree,flat
-dir_mode="tree"
+dir_mode="flat"
 
 # copy,move,delete
 action=""
@@ -181,6 +185,7 @@ dc_lines=()
 files=()
 current_file=
 current_dir=
+current_pwd=
 
 # name, access, modified, size
 sort_by="name"
@@ -191,8 +196,11 @@ declare -A files_marked
 
 last_key=""
 
-cursor_stack=()
 marks=()
+
+current_host=0
+hosts=("")
+hosts_pwd=("$PWD")
 
 ## General Functions ###########################################################
 
@@ -210,26 +218,112 @@ function _read_fb {
     stty -echo
 }
 
-## Cursor stack functions ######################################################
-
-function _cursor_push {
-    cursor_stack+=($dc_cursor)
+function _cd {
+    local host="${hosts[current_host]}"
+    if [ "$host" = "" ]; then
+        command cd "$@" || return 1
+        hosts_pwd[current_host]=$PWD
+        current_pwd="${hosts_pwd[current_host]}"
+    else
+        current_pwd="${hosts_pwd[current_host]}"
+        hosts_pwd[current_host]=$(_execute_remote "cd \"$@\"; pwd")
+        current_pwd="${hosts_pwd[current_host]}"
+    fi
+    [ ${current_pwd: -1} != '/' ] && current_pwd="$current_pwd/"
+    return 0
 }
 
-function _cursor_pop {
-    if [ ${#cursor_stack[@]} -eq 0 ]; then
-        dc_cursor=0
+function _copy {
+    local src=$(echo "$1" | sed 's/^ssh/scp/')
+    local trg=$(echo "$2" | sed 's/^ssh/scp/')
+    src=$(printf "%q" "$src")
+    trg=$(printf "%q" "$trg")
+    echo "Copy source: $src, to target: $trg"
+    scp -3 -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" $src $trg
+}
+
+function _delete {
+    if [[ "$1" =~ "^ssh:" ]]; then
+        local host=$(echo "$1" | sed -n 's|ssh://\([^/]*\).*|\1|p')
+        local path=$(echo "$1" | sed -n 's|ssh://[^/]*/\(.*\)|\1|p')
+        echo "Removing remote file: $path, Host: $host"
+        _ssh_host $host printf "%s" "$path"
     else
-        local val=${cursor_stack[-1]}
-        unset 'cursor_stack[ ${#cursor_stack[@]}-1 ]'
-        dc_cursor=$val
-    fi;
+        echo "Removing local file: $1"
+    fi
+}
+
+function _move {
+    _copy "$1" "$2" && _delete "$1"
+}
+
+function _execute {
+    local host="${hosts[current_host]}"
+    if [ "$host" = "" ]; then
+        eval "$@"
+    else
+        _execute_remote "$@"
+    fi
+}
+
+## SSH helper functions and parameters #########################################
+
+ssh_path="ControlPath $cache_dir_remotes/%r@%h:%p"
+ssh_master="ControlMaster=auto"
+ssh_persist="ControlPersist 1h"
+
+function _ssh_host {
+    local host="${hosts[current_host]}"
+    ssh -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" "ssh://$1" "${@:2}"
+}
+
+function _ssh_current_host {
+    local host="${hosts[current_host]}"
+    ssh -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" "ssh://$host" "$@"
+}
+
+function _execute_remote {
+    _ssh_current_host "cd \"$current_pwd\"; $@"
+}
+
+function _execute_remote_pty {
+    _ssh_current_host -t "cd \"$current_pwd\"; $@"
+}
+
+function _connect_host {
+    local host_id="$1"
+    local host="$2"
+    ssh -fN -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" "ssh://$host" || return 1
+    local home_dir=$(ssh -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" "ssh://$host" "pwd")
+
+    # Directories must always end with /
+    [ ${home_dir: -1} != '/' ] && home_dir="$home_dir/"
+
+    hosts[host_id]="$host"
+    hosts_pwd[host_id]="$home_dir"
+    return 0
+}
+
+## Cursor functions ############################################################
+
+function _cursor_to_file {
+    for (( i=1; i<${#files[@]}; i++ )); do
+        if [[ "${files[i]}" == "$1" ]]; then
+            dc_cursor=$i
+            return;
+        fi
+    done
 }
 
 ## Bookmarks functions #########################################################
 
 function _bookmark_add {
-    echo "$(echo $1 | cat - $cache_bookmarks)" > $cache_bookmarks
+    local bookmark=$1
+    local host="${hosts[current_host]}"
+    if [ "$host" != "" ]; then
+        bookmark="ssh://$host$1"
+    fi
+    echo "$(echo $bookmark | cat - $cache_bookmarks)" > $cache_bookmarks
 }
 
 function _bookmark_remove {
@@ -238,24 +332,30 @@ function _bookmark_remove {
     sed -i "$((dc_cursor + 1))d" $cache_bookmarks
 }
 
-## Marks functions #########################################################
+## Marks functions #############################################################
 
 function _marks_add {
-    files_marked[$current_file]=true
+    if [ -n "$current_file" ]; then
+        files_marked[$current_file]=true
+    fi
 }
 function _marks_add_all {
-    render_loading
-    for f in $current_dir/*; do
-        files_marked["$f"]=true
-    done
+    if [ -n "$current_dir" ]; then
+        render_loading
+        for f in $current_dir/*; do
+            files_marked["$f"]=true
+        done
+    fi
 }
 
 function _marks_toggle {
     # Check if selected
-    if [ ! -z "${files_marked[$current_file]}" ]; then
-        files_marked[$current_file]=
-    else
-        files_marked[$current_file]=true
+    if [ -n "$current_file" ]; then
+        if [ ! -z "${files_marked[$current_file]}" ]; then
+            files_marked[$current_file]=
+        else
+            files_marked[$current_file]=true
+        fi
     fi
 }
 
@@ -269,13 +369,24 @@ function _marks_args {
 
 function _marks_to_selection {
     if [ ${#files_marked[@]} -ne 0 ]; then
-        printf "%s\n" "${!files_marked[@]}" > $cache_selection
+        local host="${hosts[current_host]}"
+        if [ -z "$host" ]; then
+            printf "%s\n" "${!files_marked[@]}" > $cache_selection
+        else
+            printf "ssh://$host/%s\n" "${!files_marked[@]}" > $cache_selection
+        fi
         sed -i "s/ *#.*//g; /^$/d" $cache_selection
     fi
 }
 function _marks_to_selection_append {
     if [ ${#files_marked[@]} -ne 0 ]; then
-        printf "%s\n" "${!files_marked[@]}" >> $cache_selection
+        local host="${hosts[current_host]}"
+        if [ -z "$host" ]; then
+            printf "%s\n" "${!files_marked[@]}" >> $cache_selection
+        else
+            #printf "\"$host:'%s'\"\n" "${!files_marked[@]}" >> $cache_selection
+            printf "ssh://$host/%s\n" "${!files_marked[@]}" > $cache_selection
+        fi
         sed -i "s/ *#.*//g; /^$/d" $cache_selection
     fi
 }
@@ -294,14 +405,12 @@ function _selection_clear {
 ## Setup Content Functions #####################################################
 
 function set_action {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     mode="action"
     action=$1
     status_message=$2
 }
 
 function set_bookmarks {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     dc_cursor=0
     dc_lines=()
     # replace empty lines with ~ to make files array indexes consistent with file lines
@@ -312,7 +421,6 @@ function set_bookmarks {
 
 function set_marks {
     if [ ${#files_marked[@]} -ne 0 ]; then
-        if [[ $mode = "dir" ]]; then _cursor_push; fi
         dc_cursor=0
         dc_lines=()
         files=("${!files_marked[@]}")
@@ -322,7 +430,6 @@ function set_marks {
 }
 
 function set_selection {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     dc_cursor=0
     dc_lines=()
     files=($(cat $cache_selection))
@@ -331,7 +438,6 @@ function set_selection {
 }
 
 function set_filter {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     render_loading
     dc_cursor=0
     dc_lines=()
@@ -341,9 +447,8 @@ function set_filter {
 }
 
 function set_search {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     render_loading
-    found=($(find $PWD -iname "*$1*" ))
+    found=($(_execute "find $current_pwd -iname \"*$1*\""))
     dc_cursor=0
     dc_lines=()
     files=("${found[@]}")
@@ -352,9 +457,9 @@ function set_search {
 }
 
 function set_search_content {
-    if [[ $mode = "dir" ]]; then _cursor_push; fi
     render_loading
-    found=($(grep -Isr "$1"))
+    #TODO check multiple words
+    found=($(_execute grep -Isr "$1"))
     dc_cursor=0
     dc_lines=($(printf "%s\n" "${found[@]}"))
     files=($(printf "%s\n" "${found[@]}" | sed "s/:.*//g"))
@@ -362,81 +467,76 @@ function set_search_content {
     status_message="Search results: 'Esc' to quit, '+' to see current mode actions"
 }
 
+function set_host {
+    for (( i=1; i<${#hosts[@]}; i++ )); do
+        if [[ "${hosts[i]}" =~ "$1.*" ]]; then
+            if _connect_host $i "${hosts[i]}"; then
+                current_host=$i
+                set_dir $2
+                return 0
+            else
+                return 1
+            fi
+        fi
+    done
+    local host_index=${#hosts[@]}
+    if _connect_host $host_index $1; then
+        current_host=$host_index
+        set_dir $2
+    fi
+}
+
+
 function set_dir {
-    cd ${1:-.} > /dev/null 2>&1 || return
+    local old_pwd=$current_pwd
+    if ! _cd ${1:-""} > /dev/null 2>&1; then
+        return 1
+    fi
+    
     dc_cursor=0
+    current_dir=$current_pwd
     set_dir_refresh
-    current_dir=$PWD
     mode="dir"
     status_message="Directory mode: 'q' to quit, '+' to see current mode actions"
     _marks_clear
+
+    if [[ "$old_pwd" != "$current_pwd" ]]; then
+        _cursor_to_file $old_pwd
+    elif [ -n "$current_file" ]; then
+        _cursor_to_file $current_file
+    fi
 }
 
 function set_dir_refresh {
     files=()
     dc_lines=()
     if [[ $dir_mode = "flat" ]]; then
-        do_set_dir $PWD
+        do_set_dir $current_pwd
     fi
     if [[ $dir_mode = "tree" ]]; then
         dir_level=0
-        do_set_tree $PWD
+        do_set_tree $current_pwd
     fi
 }
 
 function do_set_dir {
-    cd ${1:-.} > /dev/null 2>&1 || return
-
-    dc_cursor=0
-    dc_begin=0
-
-    local dir_list=()
-    local dir_list_draw=()
-    local file_list=()
-    local file_list_draw=()
-
-    local tmp=()
-    local tmp_details=()
-
-    local sort_arg=
+    local ls_arg="-Np -1 --group-directories-first"
     if [ $sort_by = "name" ]; then
-        sort_arg=
+        ls_arg=$ls_arg
     elif [ $sort_by = "size" ]; then
-        sort_arg="-S"
+        ls_arg="$ls_arg -S"
     elif [ $sort_by = "modified" ]; then
-        sort_arg="-c"
+        ls_arg="$ls_arg -tc"
     fi
-
     if $show_hidden; then
-        tmp=($(ls -AN -1 $sort_arg))
-        tmp_details=($(ls -ANlh -1 $sort_arg))
-    else
-        tmp=($(ls -N -1 $sort_arg))
-        tmp_details=($(ls -Nlh -1 $sort_arg))
+        ls_arg="$ls_arg -A"
     fi
 
-    # root directory fix
-    [[ $PWD == / ]] && PWD=
-
-    # sort directories first
-    for ((i=0; i<${#tmp[*]}; i++)); do
-        local file=${tmp[i]}
-        if [[ -d $file ]]; then
-
-            dir_list+=("$PWD/$file")
-            dir_list_draw+=("${tmp_details[i+1]}")
-        else
-            file_list+=("$PWD/$file")
-            file_list_draw+=("${tmp_details[i+1]}")
-        fi
-    done
-
-    files=("${dir_list[@]}")
-    files+=("${file_list[@]}")
-    dc_lines=("${dir_list_draw[@]}")
-    dc_lines+=("${file_list_draw[@]}")
-
-    current_dir=$PWD
+    local pwd_esc="${1//\//\\/}"
+    find_files="ls $ls_arg | sed 's/^/$pwd_esc/'"
+    find_files_dc="ls -hl $ls_arg | sed 's/total.*//'"
+    files=($(_execute "$find_files"))
+    dc_lines=($(_execute "$find_files_dc"))
 }
 
 function do_set_tree {
@@ -444,30 +544,37 @@ function do_set_tree {
     local dir_list=()
     local file_list=()
 
-    local find_arg=
-    local sort_arg=
+    local sort_cmd=
+    local find_print_arg=
 
     if [ $sort_by = "name" ]; then
-        sort_arg="-ifd"
+        find_print_arg="-printf '%p\n'"
+        sort_cmd="|sort -ifd"
     elif [ $sort_by = "size" ]; then
-        find_arg="-printf '%s\t%p\n'"
-        sort_arg="-gr"
+        find_print_arg="-printf '%s\t%p\n'"
+        sort_cmd="|sort -gr"
     elif [ $sort_by = "modified" ]; then
-        find_arg="-printf '%T+\t%p\n'"
-        sort_arg="-gr"
+        find_print_arg="-printf '%T+\t%p\n'"
+        sort_cmd="|sort -gr"
     fi
 
-    if $show_hidden; then
-        dir_list=($(eval find -L \'$1\' -mindepth 1 -maxdepth 1 -type d $find_arg \
-            | sort $sort_arg | cut -f 2))
-        file_list=($(eval find -L \'$1\' -mindepth 1 -maxdepth 1 -not -type d $find_arg \
-            | sort $sort_arg | cut -f 2))
-    else
-        dir_list=($(eval find -L \'$1\' -mindepth 1 -maxdepth 1 -type d $find_arg \
-            | grep -v '/\.' | sort $sort_arg | cut -f 2))
-        file_list=($(eval find -L \'$1\' -mindepth 1 -maxdepth 1 -not -type d $find_arg \
-            | grep -v '/\.' | sort $sort_arg | cut -f 2))
+    grep_cmd=
+    if ! $show_hidden; then
+        grep_cmd="|grep -v '/\.'"
     fi
+
+    find_dir="find -L \"$1\" -mindepth 1 -maxdepth 1 -type d $find_print_arg \
+        $grep_cmd \
+        $sort_cmd \
+        | cut -f 2 \
+        | sed 's:\$:/:'"
+    find_file="find -L \"$1\" -mindepth 1 -maxdepth 1 -not -type d $find_print_arg \
+        $grep_cmd \
+        $sort_cmd \
+        | cut -f 2"
+
+    dir_list=($(_execute "$find_dir"))
+    file_list=($(_execute "$find_file"))
 
     local prefix=$(printf "|%*s" $(( $dir_level )) )
     prefix=${prefix// /"   |"}
@@ -477,7 +584,7 @@ function do_set_tree {
     for ((i=0; i<${#dir_list[*]}; i++)); do
         d="${dir_list[i]}"
         files+=($d)
-        dc_lines+=($prefix${d##*/})
+        dc_lines+=($prefix${d##$1})
         is_expanded=${files_expanded["$d"]}
         if [ ! -z ${is_expanded:+x} ]; then
             ((dir_level++))
@@ -535,7 +642,7 @@ function render {
 
     # Print header and navigation bar
     row "---------------------------------------------------------------------------------------"
-    row $PWD $col_nav
+    row "${hosts[$current_host]}$current_pwd" $col_nav
     row "---------------------------------------------------------------------------------------"
 
     dc_begin=$(( $dc_cursor - $dc_begin < $PADDING ? $dc_cursor - $PADDING : $dc_begin ))
@@ -553,22 +660,26 @@ function render {
         color_bg=""
 
         # Check if directory
-        if [ -d $file ]; then
-            color_fg=$col_folder
-        # Check if char device
-        elif [ -c $file ]; then
-            color_fg=$col_char
-        # Check if socket
-        elif [ -S $file ]; then
-            color_fg=$col_socket
-        # Check if executable
-        elif [ -x $file ]; then
-            color_fg=$col_exec
-        fi
-        # Check if link
-        if [ -h $file ]; then
-            color_fg=$col_link
-        fi
+        case $file in 
+            */)
+            color_fg=$col_folder;;
+            *) 
+            # Check if char device
+            if [ -c $file ]; then
+                color_fg=$col_char
+            # Check if socket
+            elif [ -S $file ]; then
+                color_fg=$col_socket
+            # Check if executable
+            elif [ -x $file ]; then
+                color_fg=$col_exec
+            fi
+            # Check if link
+            if [ -h $file ]; then
+                color_fg=$col_link
+            fi
+        esac
+
 
         # Check if selected
         if [ ! -z "$file" ]; then
@@ -580,13 +691,20 @@ function render {
         fi
         # Check if current dc_cursor
         if [ $file_index -eq $dc_cursor ]; then
-            current_file=$file
             if [[ $mode = "dir" ]]; then
-                current_dir=${file%/*}
+                if [[ $dir_mode = "flat" ]]; then
+                    current_file=$file
+                    current_dir=$current_pwd
+                fi
+                if [[ $dir_mode = "tree" ]]; then
+                    current_file=$file
+                    current_dir=${file%/*}/
+                fi
+            else
+                current_file=$file
             fi
             color_fg=$col_cursor
         fi
-
         row ${file_draw:-$file} $color_fg $color_bg
     done
 
@@ -617,6 +735,18 @@ function render_clear {
     printf "\e[J"
 }
 
+function cursor_to_file {
+    for (( i=0; i<${#files[@]}; i++ )); do
+        local fname=${files[i]}
+        [ ${fname: -1} == '/' ] && fname="${fname::-1}"
+        fname=${fname##*/}
+        if [[ "$fname" == "$1" ]]; then
+            dc_cursor=$i
+            return
+        fi
+    done
+}
+
 ## Init/Exit/Run Functions #################################################
 
 function _initialize() {
@@ -626,6 +756,7 @@ function _initialize() {
 
     # initialize cache
     mkdir -p $cache_dir
+    mkdir -p $cache_dir_remotes
     touch $cache_selection
     touch $cache_bookmarks
 
@@ -634,6 +765,10 @@ function _initialize() {
     trap _on_resume CONT
     trap _on_terminate EXIT
     trap 'terminal_fetch; render' WINCH
+
+    # register hosts
+    hosts+=($(ls -1 $cache_dir_remotes))
+    set_dir
 }
 
 # Terminal hooks
@@ -641,7 +776,7 @@ function _initialize() {
 function _on_terminate(){
     render_clear
     terminal_restore
-    printf "%s" "$PWD" > $cache_cd
+    printf "%s" "$current_pwd" > $cache_cd
     exit 0
 }
 
@@ -659,27 +794,34 @@ function _on_resume(){
 function _exit(){
     render_clear
     terminal_restore
-    printf "%s" "$PWD" > $cache_cd
+    printf "%s" "$current_pwd" > $cache_cd
     exit 0
 }
 
 function _run {
     render_clear
-    echo Executing subshell...
+    echo Executing subshell... Type 'exit' to return to fb.
     terminal_restore
-    cd $current_dir
-    eval "$SHELL"
-    cd $PWD
+
+    local host="${hosts[current_host]}"
+    if [ "$host" = "" ]; then
+        command cd "$@"
+        eval "$SHELL"
+    else
+        _execute_remote_pty $SHELL
+    fi
+
+    _cd $current_pwd
     terminal_setup
 }
 
-function _execute {
+function _run_with {
     render_clear
     terminal_restore
     if [ ${#files_marked[@]} -ne 0 ]; then
-        eval 'printf "%s\n" "${!files_marked[@]}" | xargs -n 1 -I{} $1'
-    else
-        eval 'printf "${files[dc_cursor]}" | xargs -n 1 -I{} $1'
+        eval 'printf "%s\n" "${!files_marked[@]}" | xargs -n 1 -I"{}" $1'
+    elif [ -n "$current_file" ]; then
+        eval 'printf "$current_file" | xargs -n 1 -I"{}" $1'
     fi
     terminal_setup
 }
@@ -687,6 +829,17 @@ function _execute {
 ## Mode actions ############################################################
 
 function _view_keys {
+    if [[ $key = '+' ]]; then
+        render_clear
+        row_nav
+        echo 'View commands: '
+        echo ' ~        : Toggle tree view'
+        echo ' @        : Connect to SSH host'
+        echo ' Tab      : Switch between connected SSH hosts'
+        echo ' J,K      : Increase/decrease drawing area'
+        echo ' F        : Use all avaiable drawing space'
+    fi
+
     # switch flat/tree folder view
     if [[ $key = '~' ]]; then 
         if [[ $dir_mode = "flat" ]]; then
@@ -695,6 +848,17 @@ function _view_keys {
             dir_mode="flat"
         fi
         set_dir
+    fi
+    if [[ $key = '@' ]]; then 
+        local host="unknown"
+        row_nav "Connect (user@hostname[:port]): "; _read_fb host
+        set_host $host
+        row_nav_end
+    fi
+    # Switch between hosts with tab key
+    if [[ $key = $'\x09' ]]; then 
+        current_host=$(( (current_host+1) % ${#hosts[@]} ))
+        set_dir "${hosts_pwd[current_host]}"
     fi
     if [[ $key_l = 'wr' ]]; then 
         if [[ $mode = "selection" ]]; then
@@ -729,25 +893,43 @@ function _view_keys {
 }
 
 function _action_keys {
+    if [[ $key = '+' ]]; then
+        render_clear
+        row_nav
+        echo 'Action commands: '
+        echo ' y        : Confirm current action'
+        echo ' n,q      : Cancel'
+    fi
     if [[ $key = 'y' ]]; then 
         render_loading
+        local host=${hosts[current_host]}
+        local path=${host:+ssh://$host/}$current_dir
+        #if [ -z "$host" ]; then
+        #    path="${current_dir}"
+        #else
+        #    path="ssh://$host/$current_dir"
+        #fi
         if [[ $action = "copy" ]]; then 
-            printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} cp -r '{}' $current_dir
+            for (( i=0; i<${#files[@]}; i++ )); do
+                _copy "${files[i]}" "$path"
+            done
         fi
         if [[ $action = "move" ]]; then 
-            printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} mv '{}' $current_dir
+            for (( i=0; i<${#files[@]}; i++ )); do
+                _move "${files[i]}" "$path"
+            done
         fi
         if [[ $action = "delete" ]]; then 
-            printf "%s\n" "${files[@]}" | xargs -n 100 -P 0 -I{} rm -r '{}'
+            for (( i=0; i<${#files[@]}; i++ )); do
+                _delete "${files[i]}"
+            done
         fi
         _marks_clear
         _selection_clear
-        set_dir .
-        _cursor_pop
+        set_dir
     fi
     if [[ $key = 'n' || $key = 'q' ]]; then 
-        set_dir .
-        _cursor_pop
+        set_dir
     fi
 }
 
@@ -776,7 +958,10 @@ function _navigate_keys {
     if [[ $last_key = 'f' ]]; then 
         last_goto_key=$key
         for (( i=$(( $dc_cursor + 1 )); i<${#files[@]}; i++ )); do
-            if [[ "${files[i]##*/}" == "$key"* ]]; then
+            local fname=${files[i]}
+            [ ${fname: -1} == '/' ] && fname="${fname::-1}"
+            fname=${fname##*/}
+            if [[ "$fname" == "$key"* ]]; then
                 dc_cursor=$i
                 key="consumed"
                 return
@@ -784,7 +969,10 @@ function _navigate_keys {
         done
         # if not found go again from beginning
         for (( i=0; i<$dc_cursor; i++ )); do
-            if [[ "${files[$i]##*/}" == "$key"* ]]; then
+            local fname=${files[i]}
+            [ ${fname: -1} == '/' ] && fname="${fname::-1}"
+            fname=${fname##*/}
+            if [[ "$fname" == "$key"* ]]; then
                 dc_cursor=$i
                 key="consumed"
                 return
@@ -835,21 +1023,25 @@ function _navigate_keys {
 function _navigate_tree_keys {
     # Expand current folder
     if [[ $key = 'l' || $key = $'\e[C' ]]; then
-        file="${files[dc_cursor]}"
-        if [ -d $file -o -h $file ]; then
-            if [ -z "${files_expanded["$file"]}" ]; then
-                files_expanded["$file"]=true
-                set_dir_refresh
+        if [ -n "$current_file" ]; then
+            file="$current_file"
+            if [ ${file: -1} = '/' -o -h $file ]; then
+                if [ -z "${files_expanded["$file"]}" ]; then
+                    files_expanded["$file"]=true
+                    set_dir_refresh
+                fi
             fi
             key="consumed"
         fi
     fi
     if [[ $key = 'h' || $key = $'\e[D' ]]; then
-        file="${files[dc_cursor]}"
-        if [ -d $file -o -h $file ]; then
-            if [ ! -z "${files_expanded["$file"]}" ]; then
-                files_expanded["$file"]=
-                set_dir_refresh
+        if [ -n "$current_file" ]; then
+            file="$current_file"
+            if [ ${file: -1} = '/' -o -h $file ]; then
+                if [ ! -z "${files_expanded["$file"]}" ]; then
+                    files_expanded["$file"]=
+                    set_dir_refresh
+                fi
             fi
             key="consumed"
         fi
@@ -864,8 +1056,8 @@ function _mark_keys {
         echo ' v  : mark current '
         echo ' V  : mark all '
         echo ' c  : copy marked to clipboard as command arguments'
-        echo ' y  : add marked files to selection '
-        echo ' Y  : append marked files to selection'
+        echo ' y  : set marked files as selection '
+        echo ' Y  : add marked files to selection'
         echo ' x  : clear selection and marks'
     fi
     # mark all
@@ -894,11 +1086,10 @@ function _mark_keys {
         # switch to directory mode 
         if [[ $mode = "selection" ]]; then
             set_dir
-            _cursor_pop
         fi
     fi
     # copy marked to clipboard as command arguments
-    if [[ $key = 'c' ]]; then
+    if [[ $key_l = 'gc' ]]; then
         _marks_args | xsel -bi
         _marks_clear
     fi
@@ -936,8 +1127,8 @@ function _common_keys {
         render_clear
         row_nav
         echo 'General: '
-        echo ' O  : Edit file'
-        echo ' o  : Edit file in a new window'
+        echo ' I  : Edit file'
+        echo ' i  : Edit file in a new window'
         echo ' t  : open new terminal window'
         echo ' e  : Execute command using current or marked files'
         echo ' /  : Filter '
@@ -947,44 +1138,60 @@ function _common_keys {
     fi
     # Enter current folder
     if [[ $key = 'l' || $key = $'\e[C' || $key = '' ]]; then
-        if [ ${#files[@]} -ne 0 ]; then
-            local curr="${files[dc_cursor]}"
-            if [ -d $curr ]; then
-                _cursor_push
-                set_dir $curr
-            fi
-            if [ -h $curr ]; then
-                cursor_stack=()
-                set_dir $curr
-            fi
-        fi
+        set_dir "$current_file"
     fi
     # Open current file
     if [[ $key = '' ]]; then
-        local curr="${files[dc_cursor]}"
-        if [ -f $curr ]; then
-            xdg-open $curr &>/dev/null &
+        if [ -f "$current_file" ]; then
+            xdg-open "$current_file" &>/dev/null &
             disown
         fi
     fi
     # edit current file
-    if [[ $key = 'O' ]]; then
-        /bin/bash -c "${APP_EDITOR} \"${files[dc_cursor]}\""
-        terminal_setup
+    if [[ $key = 'I' ]]; then
+        local host="${hosts[current_host]}"
+        if [ -n "$current_file" ]; then
+            if [ "$host" = "" ]; then
+                /bin/bash -c "${APP_EDITOR} \"$current_file\""
+            else
+                local cmd="cd \"$current_pwd\"; ${APP_EDITOR} \"$current_file\""
+                _ssh_current_host -t "$cmd"
+            fi
+            terminal_setup
+        fi
     fi
     # edit current file in a new window
-    if [[ $key = 'o' ]]; then
-        nohup ${APP_TERM} -e ${APP_EDITOR} ${files[dc_cursor]} >/dev/null 2>&1 &
+    if [[ $key = 'i' ]]; then
+        local host="${hosts[current_host]}"
+        if [ -n "$current_file" ]; then
+            if [ "$host" = "" ]; then
+                nohup ${APP_TERM} -e ${APP_EDITOR} "$current_file" >/dev/null 2>&1 &
+            else
+                local cmd="cd \"$current_pwd\"; ${APP_EDITOR} \"$current_file\""
+                nohup ${APP_TERM} -e \
+                    ssh -t -o "$ssh_path" -o "$ssh_master" -o $ssh_persist \
+                    "ssh://$host" "$cmd" >/dev/null 2>&1 &
+            fi
+        fi
     fi
     # open terminal
     if [[ $key = 't' ]]; then
-        nohup ${APP_TERM} >/dev/null 2>&1 &
+        local host="${hosts[current_host]}"
+        if [ -z "$host" ]; then
+            nohup ${APP_TERM} >/dev/null 2>&1 &
+        else
+            local cmd="cd \"$current_pwd\";"
+            cmd=$cmd'$SHELL'
+            nohup ${APP_TERM} -e \
+                ssh -t -o "$ssh_path" -o "$ssh_master" -o $ssh_persist \
+                "ssh://$host" "$cmd" >/dev/null 2>&1 &
+        fi
     fi
     # run program using current file
     if [[ $key = 'e'  ]]; then
-        local _program=
-        row_nav "execute with: "; _read_fb _program
-        [ $_program ] && _execute $_program 
+        local cmd=
+        row_nav "Execute with (use {} as file arg): "; _read_fb cmd
+        [ $cmd ] && _run_with $cmd 
     fi
     # open shell
     if [[ $key = ':' ]]; then
@@ -1008,8 +1215,8 @@ function _common_keys {
             done
             _marks_clear
             notification_message="Selection added to bookmarks"
-        else
-            _bookmark_add "${files[dc_cursor]}"
+        elif [ -n "$current_dir" ]; then
+            _bookmark_add "$current_dir"
             notification_message="Current folder added to bookmarks"
         fi
     fi
@@ -1025,12 +1232,6 @@ function _search_mode_keys {
         row_nav
         echo 'Search mode actions: '
         echo ' d  : delete file or folder '
-    fi
-    if [[ $key = 'l' || $key = $'\e[C' || $key = '' ]]; then
-        local curr="${files[dc_cursor]}"
-        if [ -d $curr ]; then
-            cursor_stack=()
-        fi
     fi
     # Command delete selected files
     if [[ $key = 'd' ]]; then
@@ -1062,8 +1263,14 @@ function _bookmarks_mode_keys {
     if [[ $key = 'r' ]]; then
         _bookmark_remove
     fi
-    if [[ $key = 'l' || $key = $'\e[C' || $key = "" ]]; then
-        cursor_stack=()
+    if [[ $key = 'l' ]]; then
+        local url="$current_file"
+        if [[ $url =~ 'ssh' ]]; then
+            local host=$(echo $url | sed -n 's|ssh://\([^/]*\).*|\1|p')
+            local path=$(echo $url | sed -n 's|ssh://[^/]*\(.*\)|\1|p')
+            set_host "$host" "$path"
+            key="consume"
+        fi
     fi
     if [[ $key = 'b' ]]; then
         key=$'\x1b'
@@ -1119,8 +1326,8 @@ function _dir_mode_keys {
         row_nav
         echo 'Current directory commands: '
         echo ' a  : Show hidden files/folders'
-        echo ' n  : create file or folder (to create folder end it with "/")'
-        echo ' r  : rename current file or folder'
+        echo ' o  : create file or folder (to create folder end it with "/")'
+        echo ' c  : rename current file or folder'
         echo ' p  : copy selection to current directory'
         echo ' m  : move selection to current directory'
         echo ' d  : delete marked files or folders'
@@ -1128,7 +1335,6 @@ function _dir_mode_keys {
     # Go back one folder
     if [[ $key = 'h' || $key = $'\e[D' || $key = $'\x7f' ]]; then
         set_dir ..
-        _cursor_pop
         key="consume"
     fi
     # show hiddne files
@@ -1141,32 +1347,37 @@ function _dir_mode_keys {
         set_dir .
         key="consume"
     fi
+    # sort by name
     if [[ $key_l = 'wn' ]]; then
         sort_by="name"
         set_dir .
         key="consume"
     fi
+    # sort by modified
     if [[ $key_l = 'wm' ]]; then
         sort_by="modified"
         set_dir .
         key="consume"
     fi
+    # sort by size
     if [[ $key_l = 'ws' ]]; then
         sort_by="size"
         set_dir .
         key="consume"
     fi
     # Command create new file
-    if [[ $key = 'n'  ]]; then
+    if [[ $key = 'o'  ]]; then
         row_nav "New file/foler name: "
         _read_fb name
         row_nav_end
         if [[ "$name" == */ ]]; then
-            mkdir $current_dir/$name
+            mkdir "$current_dir/$name"
+            set_dir "$current_dir/$name"
         else
             touch $current_dir/$name
+            set_dir_refresh 
+            cursor_to_file $name
         fi
-        set_dir_refresh 
         key="consume"
     fi
     # Command paste selection
@@ -1182,35 +1393,32 @@ function _dir_mode_keys {
         key="consume"
     fi
     # Command paste selection into
-    if [[ $key = 'P' && -d $current_file ]]; then
+    if [[ $key = 'P' && $current_file == */ ]]; then
         set_selection
         current_dir=$current_file
         set_action "copy" "Paste listed files to '$(basename $current_dir)'? (y/n)"
         key="consume"
     fi
     # Command move selection into
-    if [[ $key = 'M' && -d $current_file ]]; then
+    if [[ $key = 'M' && $current_file == */ ]]; then
         set_selection
         current_dir=$current_file
         set_action "move" "Move listed files to '$(basename $current_dir)'? (y/n)"
         key="consume"
     fi
     # Command rename current file
-    if [[ $key = 'r' ]]; then
-        _cursor_push
-        row_nav "New name: "
+    if [[ $key = 'c' ]]; then
+        if [ -n "$current_file" ]; then
+            row_nav "New name: "
+            _read_fb name
+            terminal_restore
+            rename -i $(basename "$current_file") "$name" "$current_file"
+            terminal_setup
+            row_nav_end
 
-        _read_fb name
-
-        terminal_restore
-        rename -i $(basename "${files[dc_cursor]}") "$name" "${files[dc_cursor]}"
-        terminal_setup
-
-        #row_nav_end
-        printf "\033[u"
-        set_dir .
-        _cursor_pop
-        key="consume"
+            set_dir_refresh
+            key="consume"
+        fi
     fi
     # Command delete selected files
     if [[ $key = 'd' ]]; then
@@ -1246,9 +1454,6 @@ _initialize
 if [[ $1 = "-b" ]]; then
     # show bookmarks 
     set_bookmarks
-else
-    # show current directory 
-    set_dir $PWD
 fi
 
 while :
@@ -1306,7 +1511,6 @@ do
         # h, left, backspace, esc
         if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' || $key = $'\x1b' ]]; then
             set_dir 
-            _cursor_pop
         fi
     fi
 
