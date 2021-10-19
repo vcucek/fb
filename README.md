@@ -24,7 +24,7 @@ Contibutions, additional testing or bug reporting is greatly apprechiated.
 2. export `EDITOR` and `TERMINAL` environment variables to override defaults (vi, st)
 3. Add following alias to .zshrc or .bashrc to be able to cd to a navigated folder:
 ```
-alias ff='fb; if [ $(fb -h) ]; then ssh -t -o "ControlPath ~/.cache/fb/remotes/$(fb -h)" ssh://$(fb -h) "cd $(fb -d);$SHELL"; else cd $(fb -d); fi'
+alias ff='fb; if [ $(fb -h) ]; then ssh -t -o "ControlPath ~/.cache/fb/remotes/$(fb -h)" ssh://$(fb -h) "cd $(fb -d);\$SHELL"; else cd $(fb -d); fi'
 
 ```
 
