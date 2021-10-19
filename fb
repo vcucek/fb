@@ -43,7 +43,7 @@ if [[ $1 = "--help" ]]; then
     echo ' e     : Execute command using current or marked files'
     echo '         Occurances of {} in specified command will be replaced by marked'
     echo '         files and executed sequentially'
-    echo ' /     : Filter display (works also in selection or bookmarks mode)'
+    echo ' /     : Filter display while typing (works also in selection or bookmarks mode)'
     echo ' ?     : Recursive search'
     echo ' g?    : Recursive content search'
     echo ' :     : Open new shell in curent directory and close fb'
@@ -216,6 +216,93 @@ function _read_fb {
     read $1
     # move one line up
     printf "\e[1A"
+    # hide cursor
+    printf '\e[?25l'
+    # do not show user input
+    stty -echo
+}
+
+function _textinput {
+
+    # show user input
+    stty echo
+    # show cursor
+    printf '\e[?25h'
+
+    key=
+    text=
+
+    # restore cursor position
+    printf "\033[u"
+    # move one line down and clear
+    printf "\033[1B"
+    printf "\033[2K"
+    # Draw
+    printf "$1$text"
+
+    while :
+    do
+        # read key
+        k1=
+        k2=
+        k3=
+        read -sn1 k1
+        if [[ $k1 == $'\e' ]]; then
+            read -sn1 -t 0.0001 k2
+            read -sn1 -t 0.0001 k3
+        fi
+        key=${k1}${k2}${k3}
+
+        # Empty text and Return 
+        if [[ $text == '' && $key = '' ]]; then
+            key="consumed"
+            # Call terminate action
+            eval " $3"
+            break
+        # Return 
+        elif [[ $key = '' ]]; then
+            key="consumed"
+            # Call confirm action
+            eval " $2"
+            break
+        # Stop 
+        elif [[ $key = 'q' || $key = $'\x1b' ]]; then
+            key="consumed"
+            # Call terminate action
+            eval " $3"
+            break
+        # Backspace 
+        elif [[ $text != '' && $key = $'\x7f' ]]; then
+            text=${text:0:-1}
+        else
+            text=$text$key
+        fi
+
+        key="consumed"
+
+        eval " $4"
+
+        dc_cursor=0
+        dc_lines=()
+
+        # restore cursor position
+        printf "\033[u"
+        render
+
+        # restore cursor position
+        printf "\033[u"
+        # move one line down, clear and print
+        printf "\033[1B"
+        printf "\033[2K"
+        # Draw
+        printf "$1$text"
+    done
+
+    # restore cursor position
+    printf "\033[u"
+
+    # move one line up
+    # printf "\e[1A"
     # hide cursor
     printf '\e[?25l'
     # do not show user input
@@ -1209,9 +1296,17 @@ function _common_keys {
     fi
     # filter
     if [[ $key = '/' ]]; then
-        row_nav "Filter: "; _read_fb filter
-        row_nav_end
-        [ $filter ] && set_filter $filter
+        #row_nav "Filter: "; _read_fb filter
+        #row_nav_end
+        #[ $filter ] && set_filter $filter
+
+        files_backup=($(printf "${files[*]}"))
+
+        # $1 - text input name
+        # $2 - on confirm action
+        # $3 - on terminate action
+        # $4 - on change action
+        _textinput "Filter: " '' 'set_dir' 'files=($(printf "${files_backup[*]}" | grep "$text"))'
     fi
     # show bookmarks
     if [[ $key = 'b' ]]; then

@@ -4,10 +4,11 @@
 - VIM like keybindings (hjkl - move, o - create file/folder, i - open file, v - mark files, y - copy, p - paste, ...).
 - Does not fill up or replace terminal window space (press 'F' to toggle fullscreen). The idea is that fb should supplement the workflow in terminal, without opening additional window or clearing existing terminal content.
 - SSH to a remote machine and copy files. Switch between connected hosts with TAB key.
-- Bookmarks stored in a text file with file paths and optional descriptions. They can also represent remote SSH locations.
+- Bookmarks stored in a text file with file paths and optional descriptions. They can also represent remote SSH locations in form (ssh://root@hostname).
 - File selection (used for copying or moving) gets persisted between fb processes.
 - Toggle between list view and tree view (use ~)
 - Colorized output as in `ls` shell command.
+- Quick filter while typing ( press / )
 - Sort files and folders based on modification time, name and size.
 - File content search with matched line displayed alongside filename.
 - Switch current directory on exit by adding alias to .bashrc `alias ff='fb; cd $(fb -d)'`.
