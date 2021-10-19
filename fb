@@ -7,9 +7,10 @@ if [[ $1 = "--help" ]]; then
     echo 'Author: Vito Cucek'
     echo ' '
     echo 'Usage:'
-    echo ' fb [-db] [folder]'
+    echo ' fb [-dbh] [folder]'
     echo ' '
     echo 'Options:'
+    echo ' -h : print last ssh destination'
     echo ' -d : print last folder'
     echo ' -b : show bookmarks'
     echo ' '
@@ -134,11 +135,14 @@ HEIGHT=20
 FULLSCREEN=false
 
 # cache files
+config_dir=${HOME}/.config/fb
+config_bookmarks=$config_dir/bookmarks
+
 cache_dir=${HOME}/.cache/fb
 cache_dir_remotes=$cache_dir/remotes
 cache_selection=$cache_dir/selection
-cache_bookmarks=$cache_dir/bookmarks
-cache_cd=$cache_dir/dir
+cache_cd=$cache_dir/last_dir
+cache_host=$cache_dir/last_host
 
 # colors
 col_cursor=$'\e[1;31m'
@@ -268,7 +272,8 @@ function _execute {
 
 ## SSH helper functions and parameters #########################################
 
-ssh_path="ControlPath $cache_dir_remotes/%r@%h:%p"
+#ssh_path="ControlPath $cache_dir_remotes/%r@%h:%p"
+ssh_path="ControlPath $cache_dir_remotes/%r@%h"
 ssh_master="ControlMaster=auto"
 ssh_persist="ControlPersist 1h"
 
@@ -323,13 +328,13 @@ function _bookmark_add {
     if [ "$host" != "" ]; then
         bookmark="ssh://$host$1"
     fi
-    echo "$(echo $bookmark | cat - $cache_bookmarks)" > $cache_bookmarks
+    echo "$(echo $bookmark | cat - $config_bookmarks)" > $config_bookmarks
 }
 
 function _bookmark_remove {
     unset files[$dc_cursor]
     files=("${files[@]}")
-    sed -i "$((dc_cursor + 1))d" $cache_bookmarks
+    sed -i "$((dc_cursor + 1))d" $config_bookmarks
 }
 
 ## Marks functions #############################################################
@@ -414,7 +419,7 @@ function set_bookmarks {
     dc_cursor=0
     dc_lines=()
     # replace empty lines with ~ to make files array indexes consistent with file lines
-    files=($(cat $cache_bookmarks | sed "s/^$/~/"))
+    files=($(cat $config_bookmarks | sed "s/^$/~/"))
     mode="bookmarks"
     status_message="Stored bookmarks: 'Esc' to quit, '+' to see current mode actions"
 }
@@ -754,11 +759,14 @@ function _initialize() {
     terminal_setup
     terminal_fetch
 
+    # initialize config
+    mkdir -p $config_dir
+    touch $config_bookmarks
+
     # initialize cache
     mkdir -p $cache_dir
     mkdir -p $cache_dir_remotes
     touch $cache_selection
-    touch $cache_bookmarks
 
     # register signal hooks
     trap _on_stop TSTP
@@ -777,6 +785,7 @@ function _on_terminate(){
     render_clear
     terminal_restore
     printf "%s" "$current_pwd" > $cache_cd
+    printf "%s" "${hosts[current_host]}" > $cache_host
     exit 0
 }
 
@@ -795,6 +804,7 @@ function _exit(){
     render_clear
     terminal_restore
     printf "%s" "$current_pwd" > $cache_cd
+    printf "%s" "${hosts[current_host]}" > $cache_host
     exit 0
 }
 
@@ -1256,7 +1266,7 @@ function _bookmarks_mode_keys {
         echo ' s  : quit bookmarks view '
     fi
     if [[ $key = 'i' ]]; then
-        /bin/bash -c "${APP_EDITOR} \"$cache_bookmarks\""
+        /bin/bash -c "${APP_EDITOR} \"$config_bookmarks\""
         terminal_setup
         set_bookmarks
     fi
@@ -1435,6 +1445,14 @@ function _dir_mode_keys {
 }
 
 ## Program execution ###########################################################
+
+# Print last ssh destination and exit
+if [[ $1 = "-h" ]]; then
+    if [ -f $cache_host ]; then
+        echo $(cat $cache_host)
+    fi
+    exit 0
+fi
 
 # Print last directory and exit
 if [[ $1 = "-d" ]]; then
