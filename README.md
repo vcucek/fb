@@ -16,7 +16,7 @@
 - Use + key to reveal current mode actions and keybindings.
 - For other features please look at keybindings listed below.
 
-This project has been inspired by other suckless programs, their philosophy, and has been made purely for fun and to acquire some additional shell scription skills.
+This project has been inspired by suckless programs and their philosophy. It has been made for fun and to acquire some additional knowledge about shell and its ecosystem.
 Contibutions, additional testing or bug reporting is greatly apprechiated.
 
 #### Installation
