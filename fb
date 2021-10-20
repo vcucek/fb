@@ -329,8 +329,8 @@ function _copy {
     local trg=$(echo "$2" | sed 's/^ssh/scp/')
     src=$(printf "%q" "$src")
     trg=$(printf "%q" "$trg")
-    echo "Copy source: $src, to target: $trg"
-    scp -3 -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" $src $trg
+    #echo "Copy source: $src, to target: $trg"
+    scp -r -3 -o "$ssh_master" -o "$ssh_path" -o "$ssh_persist" $src $trg
 }
 
 function _delete {
