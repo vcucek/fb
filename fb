@@ -337,10 +337,11 @@ function _delete {
     if [[ "$1" =~ "^ssh:" ]]; then
         local host=$(echo "$1" | sed -n 's|ssh://\([^/]*\).*|\1|p')
         local path=$(echo "$1" | sed -n 's|ssh://[^/]*/\(.*\)|\1|p')
-        echo "Removing remote file: $path, Host: $host"
+        #echo "Removing remote file: $path, Host: $host"
         _ssh_host $host printf "%s" "$path"
     else
-        echo "Removing local file: $1"
+        #echo "Removing local file: $1"
+        rm -rf "$1"
     fi
 }
 
