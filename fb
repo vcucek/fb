@@ -232,8 +232,6 @@ function _textinput {
     key=
     text=
 
-    # restore cursor position
-    printf "\033[u"
     # move one line down and clear
     printf "\033[1B"
     printf "\033[2K"
@@ -247,7 +245,7 @@ function _textinput {
         k2=
         k3=
         read -sn1 k1
-        if [[ $k1 == $'\e' ]]; then
+        if [[ $k1 == $'\e' || $k1 == $'\x' ]]; then
             read -sn1 -t 0.0001 k2
             read -sn1 -t 0.0001 k3
         fi
@@ -274,7 +272,7 @@ function _textinput {
         # Backspace 
         elif [[ $text != '' && $key = $'\x7f' ]]; then
             text=${text:0:-1}
-        else
+        elif [[ $k1 != $'\e' && $k1 != $'\x' ]]; then
             text=$text$key
         fi
 
@@ -285,12 +283,12 @@ function _textinput {
         dc_cursor=0
         dc_lines=()
 
-        # restore cursor position
-        printf "\033[u"
+        # move one line up to beginning
+        printf "\e[2000D"
+        printf "\e[1A"
+
         render
 
-        # restore cursor position
-        printf "\033[u"
         # move one line down, clear and print
         printf "\033[1B"
         printf "\033[2K"
@@ -298,11 +296,10 @@ function _textinput {
         printf "$1$text"
     done
 
-    # restore cursor position
-    printf "\033[u"
+    # move one line up to beginning
+    printf "\e[2000D"
+    printf "\e[1A"
 
-    # move one line up
-    # printf "\e[1A"
     # hide cursor
     printf '\e[?25l'
     # do not show user input
@@ -1369,7 +1366,7 @@ function _bookmarks_mode_keys {
     if [[ $key = 'r' ]]; then
         _bookmark_remove
     fi
-    if [[ $key = 'l' ]]; then
+    if [[ $key = 'l' || $key = $'\e[C' || $key = '' ]]; then
         local url="$current_file"
         if [[ $url =~ 'ssh' ]]; then
             local host=$(echo $url | sed -n 's|ssh://\([^/]*\).*|\1|p')
@@ -1579,7 +1576,7 @@ do
     k2=
     k3=
     read -sn1 k1
-    if [[ $k1 == $'\e' ]]; then
+    if [[ $k1 == $'\e' || $k1 == $'\x' ]]; then
         read -sn1 -t 0.0001 k2
         read -sn1 -t 0.0001 k3
     fi
@@ -1620,12 +1617,11 @@ do
         _mark_keys
         _search_keys
         _dir_mode_keys
-    else
-        # Go to dir mode
-        # h, left, backspace, esc
-        if [[ $key = "h" || $key = $'\e[D' || $key = $'\x7f' || $key = $'\x1b' ]]; then
-            set_dir 
-        fi
+    fi
+    # Restore dir mode
+    # backspace, esc
+    if [[ $key = $'\x7f' || $key = $'\x1b' ]]; then
+        set_dir
     fi
 
     # quit 
